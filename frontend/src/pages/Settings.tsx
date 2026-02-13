@@ -51,6 +51,23 @@ export default function SettingsPage() {
   const [presetModelsFetched, setPresetModelsFetched] = useState(false);
   const [presetModelSearchText, setPresetModelSearchText] = useState('');
 
+  // Embedding 模型列表状态
+  const [embeddingModelOptions, setEmbeddingModelOptions] = useState<Array<{ value: string; label: string; description: string }>>([]);
+  const [fetchingEmbeddingModels, setFetchingEmbeddingModels] = useState(false);
+  const [embeddingModelsFetched, setEmbeddingModelsFetched] = useState(false);
+
+  // Embedding 测试状态
+  const [testingEmbedding, setTestingEmbedding] = useState(false);
+  const [embeddingTestResult, setEmbeddingTestResult] = useState<{
+    success: boolean;
+    message: string;
+    model?: string;
+    dimensions?: number;
+    response_time_ms?: number;
+    error?: string;
+    suggestions?: string[];
+  } | null>(null);
+
   useEffect(() => {
     loadSettings();
     if (activeTab === 'presets') {
@@ -330,6 +347,125 @@ export default function SettingsPage() {
     // 如果还没有获取过模型列表，自动获取
     if (!modelsFetched && !fetchingModels) {
       handleFetchModels(true); // silent模式，不显示成功消息
+    }
+  };
+
+  // Embedding 模型列表获取
+  const handleFetchEmbeddingModels = async (silent: boolean = false) => {
+    // 优先使用 Embedding 专用配置，否则使用主 API 配置
+    const embeddingApiKey = form.getFieldValue('embedding_api_key');
+    const embeddingBaseUrl = form.getFieldValue('embedding_base_url');
+    const apiKey = embeddingApiKey || form.getFieldValue('api_key');
+    const apiBaseUrl = embeddingBaseUrl || form.getFieldValue('api_base_url');
+
+    if (!apiKey || !apiBaseUrl) {
+      if (!silent) {
+        message.warning('请先填写 API 密钥和 API 地址');
+      }
+      return;
+    }
+
+    setFetchingEmbeddingModels(true);
+    try {
+      const response = await settingsApi.getEmbeddingModels({
+        api_key: apiKey,
+        api_base_url: apiBaseUrl
+      });
+
+      // 合并默认选项和获取到的模型
+      const defaultOptions = [
+        { value: 'text-embedding-3-small', label: 'text-embedding-3-small (1536维, 推荐)', description: '' },
+        { value: 'text-embedding-3-large', label: 'text-embedding-3-large (3072维)', description: '' },
+        { value: 'text-embedding-ada-002', label: 'text-embedding-ada-002 (1536维)', description: '' },
+      ];
+
+      // 去重合并
+      const fetchedValues = new Set(response.models.map(m => m.value));
+      const mergedOptions = [
+        ...response.models,
+        ...defaultOptions.filter(d => !fetchedValues.has(d.value))
+      ];
+
+      setEmbeddingModelOptions(mergedOptions);
+      setEmbeddingModelsFetched(true);
+      if (!silent) {
+        message.success(`成功获取 ${response.count || response.models.length} 个 Embedding 模型`);
+      }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } catch (error: any) {
+      const errorMsg = error?.response?.data?.detail || '获取 Embedding 模型列表失败';
+      if (!silent) {
+        message.error(errorMsg);
+      }
+      // 失败时使用默认选项
+      setEmbeddingModelOptions([
+        { value: 'text-embedding-3-small', label: 'text-embedding-3-small (1536维, 推荐)', description: '' },
+        { value: 'text-embedding-3-large', label: 'text-embedding-3-large (3072维)', description: '' },
+        { value: 'text-embedding-ada-002', label: 'text-embedding-ada-002 (1536维)', description: '' },
+        { value: 'BAAI/bge-small-zh-v1.5', label: 'BGE Small 中文 (512维)', description: '' },
+        { value: 'BAAI/bge-base-zh-v1.5', label: 'BGE Base 中文 (768维)', description: '' },
+        { value: 'BAAI/bge-large-zh-v1.5', label: 'BGE Large 中文 (1024维)', description: '' },
+      ]);
+      setEmbeddingModelsFetched(true);
+    } finally {
+      setFetchingEmbeddingModels(false);
+    }
+  };
+
+  const handleEmbeddingModelSelectFocus = () => {
+    if (!embeddingModelsFetched && !fetchingEmbeddingModels) {
+      handleFetchEmbeddingModels(true);
+    }
+  };
+
+  const handleTestEmbedding = async () => {
+    // 优先使用 Embedding 专用配置，否则使用主 API 配置
+    const embeddingApiKey = form.getFieldValue('embedding_api_key');
+    const embeddingBaseUrl = form.getFieldValue('embedding_base_url');
+    const embeddingModel = form.getFieldValue('embedding_model');
+
+    const apiKey = embeddingApiKey || form.getFieldValue('api_key');
+    const apiBaseUrl = embeddingBaseUrl || form.getFieldValue('api_base_url');
+
+    if (!apiKey || !apiBaseUrl) {
+      message.warning('请先填写 API 密钥和 API 地址');
+      return;
+    }
+
+    if (!embeddingModel) {
+      message.warning('请选择 Embedding 模型');
+      return;
+    }
+
+    setTestingEmbedding(true);
+    setEmbeddingTestResult(null);
+
+    try {
+      const result = await settingsApi.testEmbedding({
+        api_key: apiKey,
+        api_base_url: apiBaseUrl,
+        model: embeddingModel
+      });
+
+      setEmbeddingTestResult(result);
+
+      if (result.success) {
+        message.success(`Embedding 测试成功！维度: ${result.dimensions}, 响应时间: ${result.response_time_ms}ms`);
+      } else {
+        message.error('Embedding 测试失败，请查看详细信息');
+      }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } catch (error: any) {
+      const errorMsg = error?.response?.data?.detail || '测试请求失败';
+      message.error(errorMsg);
+      setEmbeddingTestResult({
+        success: false,
+        message: '测试请求失败',
+        error: errorMsg,
+        suggestions: ['请检查网络连接', '请确认后端服务是否正常运行']
+      });
+    } finally {
+      setTestingEmbedding(false);
     }
   };
 
@@ -1284,6 +1420,184 @@ export default function SettingsPage() {
                               style={{ fontSize: isMobile ? '13px' : '14px' }}
                             />
                           </Form.Item>
+
+                          {/* Embedding 配置区域 */}
+                          <div style={{
+                            marginTop: isMobile ? 16 : 24,
+                            marginBottom: isMobile ? 16 : 24,
+                            padding: isMobile ? '12px' : '16px',
+                            background: 'var(--color-bg-layout)',
+                            borderRadius: 8,
+                            border: '1px solid var(--color-border)'
+                          }}>
+                            <Typography.Title level={5} style={{ marginTop: 0, marginBottom: isMobile ? 12 : 16 }}>
+                              <Space>
+                                Embedding 配置
+                                <InfoCircleOutlined
+                                  title="用于章节记忆向量检索，不配置则使用上方的主 API 配置"
+                                  style={{ color: 'var(--color-text-secondary)', fontSize: '14px' }}
+                                />
+                              </Space>
+                            </Typography.Title>
+                            <Alert
+                              message="可选配置：不填写则自动使用上方的 API 密钥和地址"
+                              type="info"
+                              showIcon
+                              style={{ marginBottom: isMobile ? 12 : 16, fontSize: isMobile ? '12px' : '14px' }}
+                            />
+                            <Row gutter={16}>
+                              <Col xs={24} sm={12}>
+                                <Form.Item
+                                  label="Embedding API 密钥"
+                                  name="embedding_api_key"
+                                  style={{ marginBottom: isMobile ? 12 : 16 }}
+                                >
+                                  <Input.Password
+                                    size={isMobile ? 'middle' : 'large'}
+                                    placeholder="留空则使用主 API 密钥"
+                                    autoComplete="new-password"
+                                  />
+                                </Form.Item>
+                              </Col>
+                              <Col xs={24} sm={12}>
+                                <Form.Item
+                                  label="Embedding API 地址"
+                                  name="embedding_base_url"
+                                  style={{ marginBottom: isMobile ? 12 : 16 }}
+                                >
+                                  <Input
+                                    size={isMobile ? 'middle' : 'large'}
+                                    placeholder="留空则使用主 API 地址"
+                                  />
+                                </Form.Item>
+                              </Col>
+                            </Row>
+                            <Form.Item
+                              label={
+                                <Space size={4}>
+                                  <span>Embedding 模型</span>
+                                  <InfoCircleOutlined
+                                    title="点击下拉框自动获取可用模型，或直接输入模型名称"
+                                    style={{ color: 'var(--color-text-secondary)', fontSize: isMobile ? '12px' : '14px' }}
+                                  />
+                                </Space>
+                              }
+                              name="embedding_model"
+                              style={{ marginBottom: 0 }}
+                            >
+                              <Select
+                                size={isMobile ? 'middle' : 'large'}
+                                showSearch
+                                placeholder="点击获取模型列表或直接输入"
+                                optionFilterProp="label"
+                                loading={fetchingEmbeddingModels}
+                                onFocus={handleEmbeddingModelSelectFocus}
+                                filterOption={(input, option) =>
+                                  (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                                }
+                                dropdownRender={(menu) => (
+                                  <>
+                                    {menu}
+                                    {fetchingEmbeddingModels && (
+                                      <div style={{ padding: '8px 12px', color: 'var(--color-text-secondary)', textAlign: 'center', fontSize: '12px' }}>
+                                        <Spin size="small" /> 正在获取 Embedding 模型列表...
+                                      </div>
+                                    )}
+                                    {!fetchingEmbeddingModels && embeddingModelOptions.length === 0 && !embeddingModelsFetched && (
+                                      <div style={{ padding: '8px 12px', color: 'var(--color-text-secondary)', textAlign: 'center', fontSize: '12px' }}>
+                                        点击输入框自动获取模型列表
+                                      </div>
+                                    )}
+                                  </>
+                                )}
+                                suffixIcon={
+                                  !isMobile ? (
+                                    <div
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (!fetchingEmbeddingModels) {
+                                          setEmbeddingModelsFetched(false);
+                                          handleFetchEmbeddingModels(false);
+                                        }
+                                      }}
+                                      style={{
+                                        cursor: fetchingEmbeddingModels ? 'not-allowed' : 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        padding: '0 4px',
+                                        height: '100%',
+                                        marginRight: -8
+                                      }}
+                                      title="获取 Embedding 模型列表"
+                                    >
+                                      <Button
+                                        type="text"
+                                        size="small"
+                                        icon={<ReloadOutlined />}
+                                        loading={fetchingEmbeddingModels}
+                                        style={{ pointerEvents: 'none' }}
+                                      >
+                                        获取
+                                      </Button>
+                                    </div>
+                                  ) : undefined
+                                }
+                                options={embeddingModelOptions.length > 0 ? embeddingModelOptions : [
+                                  { value: 'text-embedding-3-small', label: 'text-embedding-3-small (1536维, 推荐)', description: '' },
+                                  { value: 'text-embedding-3-large', label: 'text-embedding-3-large (3072维)', description: '' },
+                                  { value: 'text-embedding-ada-002', label: 'text-embedding-ada-002 (1536维)', description: '' },
+                                  { value: 'BAAI/bge-small-zh-v1.5', label: 'BGE Small 中文 (512维)', description: '' },
+                                  { value: 'BAAI/bge-base-zh-v1.5', label: 'BGE Base 中文 (768维)', description: '' },
+                                  { value: 'BAAI/bge-large-zh-v1.5', label: 'BGE Large 中文 (1024维)', description: '' },
+                                ]}
+                              />
+                            </Form.Item>
+
+                            {/* Embedding 测试按钮 */}
+                            <div style={{ marginTop: 16 }}>
+                              <Button
+                                icon={<ThunderboltOutlined />}
+                                onClick={handleTestEmbedding}
+                                loading={testingEmbedding}
+                                style={{
+                                  borderColor: 'var(--color-primary)',
+                                  color: 'var(--color-primary)',
+                                }}
+                              >
+                                {testingEmbedding ? '测试中...' : '测试 Embedding 配置'}
+                              </Button>
+                            </div>
+
+                            {/* Embedding 测试结果 */}
+                            {embeddingTestResult && (
+                              <Alert
+                                style={{ marginTop: 12 }}
+                                type={embeddingTestResult.success ? 'success' : 'error'}
+                                showIcon
+                                message={embeddingTestResult.message}
+                                description={
+                                  embeddingTestResult.success ? (
+                                    <Space direction="vertical" size="small">
+                                      <div>模型: <strong>{embeddingTestResult.model}</strong></div>
+                                      <div>向量维度: <strong>{embeddingTestResult.dimensions}</strong></div>
+                                      <div>响应时间: <strong>{embeddingTestResult.response_time_ms}ms</strong></div>
+                                    </Space>
+                                  ) : (
+                                    <Space direction="vertical" size="small">
+                                      {embeddingTestResult.error && <div style={{ color: '#ff4d4f' }}>{embeddingTestResult.error}</div>}
+                                      {embeddingTestResult.suggestions && embeddingTestResult.suggestions.length > 0 && (
+                                        <ul style={{ margin: 0, paddingLeft: 20 }}>
+                                          {embeddingTestResult.suggestions.map((s, i) => <li key={i}>{s}</li>)}
+                                        </ul>
+                                      )}
+                                    </Space>
+                                  )
+                                }
+                                closable
+                                onClose={() => setEmbeddingTestResult(null)}
+                              />
+                            )}
+                          </div>
 
                           {/* 测试结果展示 */}
                           {showTestResult && testResult && (
