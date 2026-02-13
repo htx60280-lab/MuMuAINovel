@@ -18,6 +18,8 @@ from app.models.career import Career, CharacterCareer
 from app.models.prompt_template import PromptTemplate
 from app.models.foreshadow import Foreshadow
 from app.models.prompt_workshop import PromptWorkshopItem, PromptSubmission, PromptWorkshopLike
+from app.models.chapter_memory import ChapterMemory
+from app.models.key_event import KeyEvent
 
 __all__ = [
     "Project",
@@ -46,5 +48,7 @@ __all__ = [
     "Foreshadow",
     "PromptWorkshopItem",
     "PromptSubmission",
-    "PromptWorkshopLike"
+    "PromptWorkshopLike",
+    "ChapterMemory",
+    "KeyEvent"
 ]

@@ -17,6 +17,11 @@ class SettingsBase(BaseModel):
     system_prompt: Optional[str] = Field(default=None, description="系统级别提示词，每次AI调用都会使用")
     preferences: Optional[str] = Field(default=None, description="其他偏好设置(JSON)")
 
+    # Embedding 配置（可选，不配置则使用主 API 配置）
+    embedding_api_key: Optional[str] = Field(default=None, description="Embedding API密钥（可选，不填则使用主API密钥）")
+    embedding_base_url: Optional[str] = Field(default=None, description="Embedding API地址（可选，不填则使用主API地址）")
+    embedding_model: Optional[str] = Field(default="text-embedding-3-small", description="Embedding模型名称")
+
 
 class SettingsCreate(SettingsBase):
     """创建设置请求模型"""

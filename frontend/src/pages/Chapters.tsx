@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, Pagination } from 'antd';
-import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, FormOutlined, PlusOutlined, ReadOutlined } from '@ant-design/icons';
+import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, Pagination, FloatButton } from 'antd';
+import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, FormOutlined, PlusOutlined, ReadOutlined, AuditOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { useChapterSync } from '../store/hooks';
-import { projectApi, writingStyleApi, chapterApi } from '../services/api';
-import type { Chapter, ChapterUpdate, ApiError, WritingStyle, AnalysisTask, ExpansionPlanData } from '../types';
+import { projectApi, writingStyleApi, chapterApi, stateChangeApi } from '../services/api';
+import type { Chapter, ChapterUpdate, ApiError, WritingStyle, AnalysisTask, ExpansionPlanData, ReviewResult } from '../types';
 import type { TextAreaRef } from 'antd/es/input/TextArea';
 import ChapterAnalysis from '../components/ChapterAnalysis';
 import ExpansionPlanEditor from '../components/ExpansionPlanEditor';
@@ -13,6 +13,8 @@ import { SSEProgressModal } from '../components/SSEProgressModal';
 import ChapterReader from '../components/ChapterReader';
 import PartialRegenerateToolbar from '../components/PartialRegenerateToolbar';
 import PartialRegenerateModal from '../components/PartialRegenerateModal';
+import ChapterReviewModal from '../components/ChapterReviewModal';
+import StateChangeConfirmModal from '../components/StateChangeConfirmModal';
 
 const { TextArea } = Input;
 
@@ -91,6 +93,16 @@ export default function Chapters() {
   const [selectionStartPosition, setSelectionStartPosition] = useState(0);
   const [selectionEndPosition, setSelectionEndPosition] = useState(0);
   const [partialRegenerateModalVisible, setPartialRegenerateModalVisible] = useState(false);
+
+  // AI深度审查状态
+  const [reviewModalVisible, setReviewModalVisible] = useState(false);
+  const [reviewChapterId, setReviewChapterId] = useState<string | null>(null);
+  const [reviewChapterTitle, setReviewChapterTitle] = useState<string>('');
+  const [reviewCachedResult, setReviewCachedResult] = useState<ReviewResult | null>(null);
+
+  // 状态变化确认弹窗状态
+  const [stateConfirmModalVisible, setStateConfirmModalVisible] = useState(false);
+  const [stateConfirmChapter, setStateConfirmChapter] = useState<Chapter | null>(null);
 
   // 单章节生成进度状态
   const [singleChapterProgress, setSingleChapterProgress] = useState(0);
@@ -3009,6 +3021,53 @@ export default function Chapters() {
           />
         );
       })()}
+
+      {/* AI深度审查弹窗 */}
+      <ChapterReviewModal
+        visible={reviewModalVisible}
+        chapterId={reviewChapterId}
+        chapterTitle={reviewChapterTitle}
+        cachedResult={reviewCachedResult}
+        onClose={() => {
+          setReviewModalVisible(false);
+          setReviewChapterId(null);
+          setReviewCachedResult(null);
+        }}
+      />
+
+      {/* 状态变化确认弹窗 */}
+      <StateChangeConfirmModal
+        visible={stateConfirmModalVisible}
+        chapter={stateConfirmChapter}
+        onConfirm={async (confirmedChanges) => {
+          if (stateConfirmChapter) {
+            try {
+              await stateChangeApi.confirmStateChange(stateConfirmChapter.id, confirmedChanges);
+              message.success('状态变化已确认');
+            } catch {
+              message.error('确认状态变化失败');
+            }
+          }
+          setStateConfirmModalVisible(false);
+          setStateConfirmChapter(null);
+        }}
+        onReject={async () => {
+          if (stateConfirmChapter) {
+            try {
+              await stateChangeApi.rejectStateChange(stateConfirmChapter.id);
+              message.info('状态变化已拒绝');
+            } catch {
+              message.error('拒绝状态变化失败');
+            }
+          }
+          setStateConfirmModalVisible(false);
+          setStateConfirmChapter(null);
+        }}
+        onCancel={() => {
+          setStateConfirmModalVisible(false);
+          setStateConfirmChapter(null);
+        }}
+      />
     </div>
   );
 }

@@ -19,6 +19,12 @@ class Settings(Base):
     max_tokens = Column(Integer, default=2000, comment="最大token数")
     system_prompt = Column(Text, comment="系统级别提示词，每次AI调用都会使用")
     preferences = Column(Text, comment="其他偏好设置(JSON)")
+
+    # Embedding 配置（可选，不配置则使用主 API 配置）
+    embedding_api_key = Column(String(500), comment="Embedding API密钥（可选）")
+    embedding_base_url = Column(String(500), comment="Embedding API地址（可选）")
+    embedding_model = Column(String(100), default="text-embedding-3-small", comment="Embedding模型名称")
+
     created_at = Column(DateTime, server_default=func.now(), comment="创建时间")
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), comment="更新时间")
     

@@ -3,6 +3,7 @@
 -- 创建必要的扩展
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";  -- UUID生成支持
 CREATE EXTENSION IF NOT EXISTS "pg_trgm";    -- 模糊搜索和全文检索支持
+CREATE EXTENSION IF NOT EXISTS "vector";     -- pgvector向量搜索支持
 
 -- 输出初始化信息
 DO $$
@@ -12,6 +13,7 @@ BEGIN
     RAISE NOTICE '已安装扩展:';
     RAISE NOTICE '  - uuid-ossp: UUID生成支持';
     RAISE NOTICE '  - pg_trgm: 模糊搜索和全文检索支持';
+    RAISE NOTICE '  - vector: pgvector向量搜索支持';
     RAISE NOTICE '';
     RAISE NOTICE '注意:';
     RAISE NOTICE '  - 时区配置: 通过docker-compose.yml的TZ环境变量';

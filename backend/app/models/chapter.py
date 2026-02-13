@@ -1,5 +1,5 @@
 """章节数据模型"""
-from sqlalchemy import Column, String, Text, Integer, DateTime, ForeignKey
+from sqlalchemy import Column, String, Text, Integer, DateTime, ForeignKey, JSON
 from sqlalchemy.sql import func
 from app.database import Base
 import uuid
@@ -24,7 +24,12 @@ class Chapter(Base):
     
     # 大纲展开规划数据（JSON格式）
     expansion_plan = Column(Text, comment="展开规划详情(JSON): 包含key_events, character_focus, emotional_tone等")
-    
+
+    # 章节记忆与审查相关字段
+    end_hook = Column(JSON, comment="章节结尾钩子: {type, content, must_respond_next}")
+    review_result = Column(JSON, comment="AI审查结果缓存: {overall_score, dimensions, reviewed_at}")
+    pending_state_change = Column(JSON, comment="待确认的状态变化")
+
     created_at = Column(DateTime, server_default=func.now(), comment="创建时间")
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), comment="更新时间")
     

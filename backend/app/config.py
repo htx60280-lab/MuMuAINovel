@@ -77,7 +77,19 @@ class Settings(BaseSettings):
     default_model: str = "gpt-4"
     default_temperature: float = 0.7
     default_max_tokens: int = 32000
-    
+
+    # 质量门控（生成后审查与重试）
+    quality_gate_pass_threshold: float = 60.0  # 审查通过阈值
+    quality_gate_max_retries: int = 2  # 最大重试次数
+
+    # 独立 Embedding 服务配置（用于向量检索，与主 LLM 解耦）
+    # 不配置则自动使用 openai_api_key 和 openai_base_url
+    embedding_api_key: Optional[str] = None  # 可选：专用 Embedding API Key
+    embedding_base_url: Optional[str] = None  # 可选：专用 Base URL
+    embedding_model: str = "text-embedding-3-small"  # Embedding 模型名称
+    # embedding_dimensions 会根据模型自动识别，也可手动覆盖
+    embedding_dimensions: Optional[int] = None
+
     # MCP配置
     mcp_max_rounds: int = 3  # MCP工具调用最大轮数（全局统一控制）
     
@@ -123,6 +135,54 @@ settings = Settings()
 config_logger.info(f"配置加载完成: {settings.app_name} v{settings.app_version}")
 config_logger.debug(f"调试模式: {settings.debug}")
 config_logger.debug(f"AI提供商: {settings.default_ai_provider}")
+
+
+# ==================== Embedding 维度自动识别 ====================
+
+# 常见 Embedding 模型的维度映射表
+EMBEDDING_MODEL_DIMENSIONS: dict[str, int] = {
+    # OpenAI 模型
+    "text-embedding-3-small": 1536,
+    "text-embedding-3-large": 3072,
+    "text-embedding-ada-002": 1536,
+    # 国内常用模型
+    "BAAI/bge-small-zh-v1.5": 512,
+    "BAAI/bge-base-zh-v1.5": 768,
+    "BAAI/bge-large-zh-v1.5": 1024,
+    "BAAI/bge-m3": 1024,
+    # sentence-transformers 模型
+    "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2": 384,
+    "sentence-transformers/all-MiniLM-L6-v2": 384,
+    "sentence-transformers/all-mpnet-base-v2": 768,
+    # 智谱 AI
+    "embedding-2": 1024,
+    "embedding-3": 2048,
+    # 阿里通义
+    "text-embedding-v1": 1536,
+    "text-embedding-v2": 1536,
+}
+
+
+def get_embedding_dimensions(model_name: str, configured_dims: int | None = None) -> int:
+    """根据模型名称自动识别 embedding 维度"""
+    if configured_dims is not None:
+        return configured_dims
+    if model_name in EMBEDDING_MODEL_DIMENSIONS:
+        return EMBEDDING_MODEL_DIMENSIONS[model_name]
+    model_lower = model_name.lower()
+    for known_model, dims in EMBEDDING_MODEL_DIMENSIONS.items():
+        if known_model.lower() in model_lower or model_lower in known_model.lower():
+            config_logger.info(f"Embedding 模型 '{model_name}' 模糊匹配到 '{known_model}'，维度: {dims}")
+            return dims
+    config_logger.warning(f"未知 Embedding 模型 '{model_name}'，使用默认维度 1536")
+    return 1536
+
+
+EMBEDDING_DIMENSIONS = get_embedding_dimensions(
+    settings.embedding_model,
+    settings.embedding_dimensions
+)
+config_logger.info(f"Embedding 配置: model={settings.embedding_model}, dimensions={EMBEDDING_DIMENSIONS}")
 
 
 # ==================== 提示词工坊实例标识 ====================
