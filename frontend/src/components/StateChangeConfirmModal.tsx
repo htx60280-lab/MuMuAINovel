@@ -9,7 +9,7 @@ import {
   CheckOutlined,
   CloseOutlined,
 } from '@ant-design/icons';
-import { chapterApi } from '../services/api';
+import { stateChangeApi } from '../services/api';
 
 interface StateChangeConfirmModalProps {
   visible: boolean;
@@ -98,7 +98,7 @@ const StateChangeConfirmModal: React.FC<StateChangeConfirmModalProps> = ({
         confirmedChanges.time_passed = pendingStateChange.time_passed;
       }
 
-      await chapterApi.confirmStateChange(chapterId, confirmedChanges);
+      await stateChangeApi.confirmStateChange(chapterId, confirmedChanges);
       message.success('状态变化已确认');
       onConfirm();
     } catch (error) {
@@ -112,7 +112,7 @@ const StateChangeConfirmModal: React.FC<StateChangeConfirmModalProps> = ({
   const handleReject = async () => {
     setRejecting(true);
     try {
-      await chapterApi.rejectStateChange(chapterId);
+      await stateChangeApi.rejectStateChange(chapterId);
       message.info('状态变化已拒绝');
       onReject();
     } catch (error) {
