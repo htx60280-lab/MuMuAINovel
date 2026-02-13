@@ -324,7 +324,7 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
 
     return analysis.analysis.suggestions.map((suggestion, index) => ({
       category: '改进建议',
-      content: suggestion,
+      content: typeof suggestion === 'string' ? suggestion : (suggestion as {suggestion?: string}).suggestion || JSON.stringify(suggestion),
       priority: index < 3 ? 'high' : 'medium'
     }));
   };
@@ -416,7 +416,7 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
                       dataSource={analysis_data.suggestions}
                       renderItem={(item, index) => (
                         <List.Item>
-                          <span>{index + 1}. {item}</span>
+                          <span>{index + 1}. {typeof item === 'string' ? item : (item as {type?: string; suggestion?: string}).suggestion || JSON.stringify(item)}</span>
                         </List.Item>
                       )}
                     />
