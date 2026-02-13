@@ -102,8 +102,8 @@ COPY backend/alembic/postgres ./alembic
 COPY backend/scripts/entrypoint.sh /app/entrypoint.sh
 COPY backend/scripts/migrate.py ./scripts/migrate.py
 
-# 赋予执行权限
-RUN chmod +x /app/entrypoint.sh
+# 赋予执行权限，确保行尾为 LF（防止 Windows CRLF 导致 exec format error）
+RUN sed -i 's/\r$//' /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # 创建必要的目录
 RUN mkdir -p /app/data /app/logs
