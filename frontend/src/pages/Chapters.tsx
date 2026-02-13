@@ -3,7 +3,7 @@ import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge,
 import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, FormOutlined, PlusOutlined, ReadOutlined, AuditOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { useChapterSync } from '../store/hooks';
-import { projectApi, writingStyleApi, chapterApi, stateChangeApi } from '../services/api';
+import { projectApi, writingStyleApi, chapterApi } from '../services/api';
 import type { Chapter, ChapterUpdate, ApiError, WritingStyle, AnalysisTask, ExpansionPlanData, ReviewResult } from '../types';
 import type { TextAreaRef } from 'antd/es/input/TextArea';
 import ChapterAnalysis from '../components/ChapterAnalysis';
@@ -97,7 +97,6 @@ export default function Chapters() {
   // AI深度审查状态
   const [reviewModalVisible, setReviewModalVisible] = useState(false);
   const [reviewChapterId, setReviewChapterId] = useState<string | null>(null);
-  const [reviewChapterTitle, setReviewChapterTitle] = useState<string>('');
   const [reviewCachedResult, setReviewCachedResult] = useState<ReviewResult | null>(null);
 
   // 状态变化确认弹窗状态
@@ -3023,51 +3022,41 @@ export default function Chapters() {
       })()}
 
       {/* AI深度审查弹窗 */}
-      <ChapterReviewModal
-        visible={reviewModalVisible}
-        chapterId={reviewChapterId}
-        chapterTitle={reviewChapterTitle}
-        cachedResult={reviewCachedResult}
-        onClose={() => {
-          setReviewModalVisible(false);
-          setReviewChapterId(null);
-          setReviewCachedResult(null);
-        }}
-      />
+      {reviewChapterId && (
+        <ChapterReviewModal
+          visible={reviewModalVisible}
+          chapterId={reviewChapterId}
+          cachedResult={reviewCachedResult}
+          onClose={() => {
+            setReviewModalVisible(false);
+            setReviewChapterId(null);
+            setReviewCachedResult(null);
+          }}
+        />
+      )}
 
       {/* 状态变化确认弹窗 */}
-      <StateChangeConfirmModal
-        visible={stateConfirmModalVisible}
-        chapter={stateConfirmChapter}
-        onConfirm={async (confirmedChanges) => {
-          if (stateConfirmChapter) {
-            try {
-              await stateChangeApi.confirmStateChange(stateConfirmChapter.id, confirmedChanges);
-              message.success('状态变化已确认');
-            } catch {
-              message.error('确认状态变化失败');
-            }
-          }
-          setStateConfirmModalVisible(false);
-          setStateConfirmChapter(null);
-        }}
-        onReject={async () => {
-          if (stateConfirmChapter) {
-            try {
-              await stateChangeApi.rejectStateChange(stateConfirmChapter.id);
-              message.info('状态变化已拒绝');
-            } catch {
-              message.error('拒绝状态变化失败');
-            }
-          }
-          setStateConfirmModalVisible(false);
-          setStateConfirmChapter(null);
-        }}
-        onCancel={() => {
-          setStateConfirmModalVisible(false);
-          setStateConfirmChapter(null);
-        }}
-      />
+      {stateConfirmChapter && (
+        <StateChangeConfirmModal
+          visible={stateConfirmModalVisible}
+          chapterId={stateConfirmChapter.id}
+          chapterNumber={stateConfirmChapter.chapter_number}
+          chapterTitle={stateConfirmChapter.title}
+          pendingStateChange={stateConfirmChapter.pending_state_change ?? null}
+          onConfirm={() => {
+            setStateConfirmModalVisible(false);
+            setStateConfirmChapter(null);
+          }}
+          onReject={() => {
+            setStateConfirmModalVisible(false);
+            setStateConfirmChapter(null);
+          }}
+          onClose={() => {
+            setStateConfirmModalVisible(false);
+            setStateConfirmChapter(null);
+          }}
+        />
+      )}
     </div>
   );
 }
