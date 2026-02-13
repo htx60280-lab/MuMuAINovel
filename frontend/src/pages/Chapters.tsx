@@ -2123,8 +2123,8 @@ export default function Chapters() {
                           type="text"
                           icon={<AuditOutlined />}
                           onClick={() => handleOpenReview(item)}
-                          disabled={!hasContent}
-                          title={!hasContent ? '请先生成章节内容' : 'AI深度审查'}
+                          disabled={!item.content || item.content.trim() === ''}
+                          title={!item.content || item.content.trim() === '' ? '请先生成章节内容' : 'AI深度审查'}
                         >
                           审查
                         </Button>,
