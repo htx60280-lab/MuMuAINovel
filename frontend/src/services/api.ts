@@ -210,6 +210,21 @@ export const settingsApi = {
       suggestions?: string[];
     }>('/settings/test', params),
 
+  getEmbeddingModels: (params: { api_key: string; api_base_url: string }) =>
+    api.get<unknown, { models: Array<{ value: string; label: string; description: string }>; count?: number }>('/settings/embedding-models', { params }),
+
+  testEmbedding: (params: { api_key: string; api_base_url: string; model: string }) =>
+    api.post<unknown, {
+      success: boolean;
+      message: string;
+      model?: string;
+      dimensions?: number;
+      response_time_ms?: number;
+      api_base_url?: string;
+      error?: string;
+      suggestions?: string[];
+    }>('/settings/test-embedding', params),
+
   checkFunctionCalling: (params: { api_key: string; api_base_url: string; provider: string; llm_model: string }) =>
     api.post<unknown, {
       success: boolean;
@@ -1116,4 +1131,88 @@ export const foreshadowApi = {
       `/foreshadows/projects/${projectId}/sync-from-analysis`,
       data
     ),
+};
+
+// 章节状态确认 API
+export const stateChangeApi = {
+  getPendingStateChange: (chapterId: string) =>
+    api.get<unknown, {
+      chapter_id: string;
+      chapter_number: number;
+      chapter_title: string;
+      pending_state_change: {
+        items_gained?: string[];
+        items_lost?: string[];
+        location_change?: { from: string | null; to: string | null };
+        relationships?: Record<string, string>;
+        status_changes?: Record<string, number>;
+        time_passed?: string;
+      } | null;
+      has_pending: boolean;
+    }>(`/chapters/${chapterId}/pending-state`),
+
+  confirmStateChange: (chapterId: string, confirmedChanges: Record<string, unknown>) =>
+    api.post<unknown, {
+      success: boolean;
+      message: string;
+      confirmed_changes: Record<string, unknown>;
+    }>(`/chapters/${chapterId}/confirm-state`, confirmedChanges),
+
+  rejectStateChange: (chapterId: string) =>
+    api.post<unknown, {
+      success: boolean;
+      message: string;
+    }>(`/chapters/${chapterId}/reject-state`, {}),
+};
+
+// 章节审查 API
+export const reviewApi = {
+  reviewChapter: (chapterId: string, options?: { dimensions?: string[]; force_refresh?: boolean }) =>
+    api.post<unknown, import('../types').ReviewResult>(
+      `/review/chapter/${chapterId}`,
+      { dimensions: options?.dimensions, force_refresh: options?.force_refresh }
+    ),
+
+  getDimensions: () =>
+    api.get<unknown, { dimensions: import('../types').ReviewDimension[] }>('/review/dimensions'),
+};
+
+// 关键事件 API
+export const keyEventApi = {
+  getKeyEvents: (projectId: string, params?: { event_type?: string; min_importance?: number }) =>
+    api.get<unknown, {
+      project_id: string;
+      total: number;
+      events: Array<{
+        id: string;
+        chapter_number: number;
+        event_type: string;
+        title: string;
+        description: string | null;
+        related_entities: Record<string, string[]> | null;
+        importance: number;
+        is_resolved: number;
+        resolved_chapter: number | null;
+        created_at: string;
+      }>;
+    }>(`/key-events/project/${projectId}`, { params }),
+
+  createKeyEvent: (data: {
+    project_id: string;
+    chapter_number: number;
+    event_type: string;
+    title: string;
+    description?: string;
+    importance?: number;
+  }) =>
+    api.post<unknown, { id: string; message: string }>('/key-events', data),
+
+  markResolved: (eventId: string, resolvedChapter: number) =>
+    api.post<unknown, { success: boolean; message: string }>(
+      `/key-events/${eventId}/resolve`,
+      { resolved_chapter: resolvedChapter }
+    ),
+
+  deleteKeyEvent: (eventId: string) =>
+    api.delete<unknown, { success: boolean; message: string }>(`/key-events/${eventId}`),
 };

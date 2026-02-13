@@ -23,6 +23,10 @@ export interface Settings {
   max_tokens: number;
   system_prompt?: string;
   preferences?: string;
+  // Embedding 配置
+  embedding_api_key?: string;
+  embedding_base_url?: string;
+  embedding_model?: string;
   created_at: string;
   updated_at: string;
 }
@@ -36,6 +40,10 @@ export interface SettingsUpdate {
   max_tokens?: number;
   system_prompt?: string;
   preferences?: string;
+  // Embedding 配置
+  embedding_api_key?: string;
+  embedding_base_url?: string;
+  embedding_model?: string;
 }
 
 // API预设相关类型定义
@@ -286,8 +294,51 @@ export interface Chapter {
   sub_index?: number; // 大纲下的子章节序号
   outline_title?: string; // 大纲标题（从后端联表查询获得）
   outline_order?: number; // 大纲排序序号（从后端联表查询获得）
+  end_hook?: {
+    type: string;
+    content: string;
+    must_respond_next: boolean;
+  } | null;
+  review_result?: ReviewResult | null;
+  pending_state_change?: {
+    items_gained?: string[];
+    items_lost?: string[];
+    location_change?: { from: string | null; to: string | null };
+    relationships?: Record<string, string>;
+    status_changes?: Record<string, number>;
+    time_passed?: string;
+  } | null;
   created_at: string;
   updated_at: string;
+}
+
+// 章节审查相关类型
+export interface ReviewDimensionResult {
+  dimension: string;
+  score: number;
+  analysis: string;
+  suggestions: string[];
+  details: Record<string, unknown>;
+}
+
+export interface ReviewResult {
+  chapter_id: string;
+  overall_score: number;
+  dimensions: Record<string, ReviewDimensionResult>;
+  reviewed_at: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface ReviewRequest {
+  dimensions?: string[];
+  force_refresh?: boolean;
+}
+
+export interface ReviewDimension {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
 }
 
 export interface ChapterCreate {

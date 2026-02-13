@@ -55,6 +55,9 @@ class ChapterResponse(BaseModel):
     expansion_plan: Optional[str] = None
     outline_title: Optional[str] = None  # 大纲标题（从Outline表联查）
     outline_order: Optional[int] = None  # 大纲排序序号（从Outline表联查）
+    end_hook: Optional[Dict[str, Any]] = Field(None, description="章节结尾钩子: {type, content, must_respond_next}")
+    review_result: Optional[Dict[str, Any]] = Field(None, description="AI审查结果缓存: {overall_score, dimensions, reviewed_at}")
+    pending_state_change: Optional[Dict[str, Any]] = Field(None, description="待确认的状态变化")
     created_at: datetime
     updated_at: datetime
     

@@ -1,5 +1,5 @@
 """项目数据模型"""
-from sqlalchemy import Column, String, Text, DateTime, Integer, CheckConstraint
+from sqlalchemy import Column, String, Text, DateTime, Integer, CheckConstraint, JSON
 from sqlalchemy.sql import func
 from app.database import Base
 import uuid
@@ -32,7 +32,10 @@ class Project(Base):
     chapter_count = Column(Integer, comment="章节数量")
     narrative_perspective = Column(String(50), comment="叙事视角：first_person/third_person/omniscient")
     character_count = Column(Integer, default=5, comment="角色数量")
-    
+
+    # 全局状态容器（State Machine）
+    world_state = Column(JSON, comment="全局状态: {current_location, inventory, relationships, status_changes, last_time_reference}")
+
     created_at = Column(DateTime, server_default=func.now(), comment="创建时间")
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), comment="更新时间")
     

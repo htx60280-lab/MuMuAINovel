@@ -5,7 +5,7 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 import json
 import asyncio
-from typing import Optional
+from typing import Optional, Dict, Any
 from datetime import datetime
 from asyncio import Queue, Lock
 
@@ -50,9 +50,12 @@ from app.services.plot_analyzer import PlotAnalyzer
 from app.services.memory_service import memory_service
 from app.services.foreshadow_service import foreshadow_service
 from app.services.chapter_regenerator import ChapterRegenerator
+from app.services.chapter_memory_service import ChapterMemoryService
+from app.services.critic_agent import CriticAgent
 from app.logger import get_logger
 from app.api.settings import get_user_ai_service
 from app.utils.sse_response import SSEResponse, create_sse_response
+from app.config import settings
 
 router = APIRouter(prefix="/chapters", tags=["章节管理"])
 logger = get_logger(__name__)
@@ -3806,5 +3809,179 @@ async def apply_partial_regenerate(
         "word_count": new_word_count,
         "old_word_count": old_word_count,
         "message": "局部重写已应用"
+    }
+
+
+# ==================== 后台审查与章节记忆 ====================
+
+async def review_chapter_background(
+    chapter_id: str,
+    user_id: str,
+    ai_service: AIService
+) -> bool:
+    """
+    后台异步审查章节（章节生成后自动执行）
+    """
+    from app.database import get_engine
+    from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
+
+    db_session = None
+    try:
+        engine = await get_engine(user_id)
+        AsyncSessionLocal = async_sessionmaker(
+            engine,
+            class_=AsyncSession,
+            expire_on_commit=False
+        )
+        db_session = AsyncSessionLocal()
+
+        result = await db_session.execute(
+            select(Chapter).where(Chapter.id == chapter_id)
+        )
+        chapter = result.scalar_one_or_none()
+
+        if not chapter or not chapter.content:
+            logger.warning(f"⚠️ 后台审查: 章节不存在或无内容 chapter_id={chapter_id}")
+            return False
+
+        if chapter.review_result:
+            logger.info(f"📋 后台审查: 已有缓存结果，跳过 chapter_id={chapter_id[:8]}")
+            return True
+
+        logger.info(f"🔍 后台审查开始: chapter_id={chapter_id[:8]}")
+
+        critic = CriticAgent(db=db_session, ai_service=ai_service)
+        review_result = await critic.review_chapter(chapter_id=chapter_id)
+
+        dimensions_cache = {}
+        for dim_name, dim_result in review_result.dimensions.items():
+            dimensions_cache[dim_name] = {
+                "dimension": dim_result.dimension,
+                "score": dim_result.score,
+                "analysis": dim_result.analysis,
+                "suggestions": dim_result.suggestions,
+                "details": dim_result.details
+            }
+
+        chapter.review_result = {
+            "overall_score": review_result.overall_score,
+            "dimensions": dimensions_cache,
+            "reviewed_at": review_result.reviewed_at,
+            "metadata": review_result.metadata
+        }
+        await db_session.commit()
+
+        logger.info(
+            f"✅ 后台审查完成: chapter_id={chapter_id[:8]}, "
+            f"综合评分={review_result.overall_score:.1f}"
+        )
+        return True
+
+    except Exception as e:
+        logger.error(f"❌ 后台审查失败: chapter_id={chapter_id}, error={e}", exc_info=True)
+        return False
+
+    finally:
+        if db_session:
+            await db_session.close()
+
+
+# ==================== 状态确认 API ====================
+
+@router.get("/{chapter_id}/pending-state", summary="获取章节待确认的状态变化")
+async def get_pending_state_change(
+    chapter_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """获取章节待确认的状态变化"""
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+
+    result = await db.execute(
+        select(Chapter).where(Chapter.id == chapter_id)
+    )
+    chapter = result.scalar_one_or_none()
+
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+
+    await verify_project_access(chapter.project_id, user_id, db)
+
+    return {
+        "chapter_id": chapter_id,
+        "chapter_number": chapter.chapter_number,
+        "chapter_title": chapter.title,
+        "pending_state_change": chapter.pending_state_change,
+        "has_pending": chapter.pending_state_change is not None
+    }
+
+
+@router.post("/{chapter_id}/confirm-state", summary="确认章节状态变化")
+async def confirm_state_change(
+    chapter_id: str,
+    request: Request,
+    confirmed_changes: Dict[str, Any],
+    db: AsyncSession = Depends(get_db)
+):
+    """确认章节的状态变化，将确认的变化写入全局状态"""
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+
+    result = await db.execute(
+        select(Chapter).where(Chapter.id == chapter_id)
+    )
+    chapter = result.scalar_one_or_none()
+
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+
+    await verify_project_access(chapter.project_id, user_id, db)
+
+    service = ChapterMemoryService(db=db)
+    success = await service.confirm_state_change(chapter_id, confirmed_changes)
+
+    if not success:
+        raise HTTPException(status_code=500, detail="确认状态变化失败")
+
+    return {
+        "success": True,
+        "message": "状态变化已确认并更新到全局状态",
+        "confirmed_changes": confirmed_changes
+    }
+
+
+@router.post("/{chapter_id}/reject-state", summary="拒绝章节状态变化")
+async def reject_state_change(
+    chapter_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """拒绝章节的状态变化，清除待确认状态"""
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+
+    result = await db.execute(
+        select(Chapter).where(Chapter.id == chapter_id)
+    )
+    chapter = result.scalar_one_or_none()
+
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+
+    await verify_project_access(chapter.project_id, user_id, db)
+
+    service = ChapterMemoryService(db=db)
+    success = await service.reject_state_change(chapter_id)
+
+    if not success:
+        raise HTTPException(status_code=500, detail="拒绝状态变化失败")
+
+    return {
+        "success": True,
+        "message": "状态变化已拒绝"
     }
 

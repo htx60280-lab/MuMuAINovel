@@ -376,6 +376,122 @@ async def get_available_models(
         )
 
 
+@router.get("/embedding-models")
+async def get_embedding_models(
+    api_key: str,
+    api_base_url: str
+):
+    """从配置的 API 获取可用的 Embedding 模型列表"""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            url = f"{api_base_url.rstrip('/')}/models"
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+
+            logger.info(f"正在从 {url} 获取 Embedding 模型列表")
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+
+            data = response.json()
+            models = []
+
+            embedding_keywords = [
+                "embedding", "embed", "bge", "e5", "gte",
+                "text-embedding", "ada", "voyage", "cohere"
+            ]
+
+            if "data" in data and isinstance(data["data"], list):
+                for model in data["data"]:
+                    model_id = model.get("id", "").lower()
+                    is_embedding = any(kw in model_id for kw in embedding_keywords)
+                    if is_embedding:
+                        models.append({
+                            "value": model.get("id", ""),
+                            "label": model.get("id", ""),
+                            "description": model.get("description", "") or ""
+                        })
+
+            if not models:
+                logger.info("未找到 Embedding 专用模型，返回所有模型")
+                for model in data.get("data", []):
+                    model_id = model.get("id", "")
+                    if model_id:
+                        models.append({
+                            "value": model_id,
+                            "label": model_id,
+                            "description": model.get("description", "") or ""
+                        })
+
+            logger.info(f"成功获取 {len(models)} 个 Embedding 模型")
+            return {"models": models, "count": len(models)}
+
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=400, detail=f"无法从 API 获取 Embedding 模型列表 (HTTP {e.response.status_code})")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=400, detail=f"无法连接到 API: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取 Embedding 模型列表失败: {str(e)}")
+
+
+class EmbeddingTestRequest(BaseModel):
+    """Embedding 测试请求模型"""
+    api_key: str
+    api_base_url: str
+    model: str
+
+
+@router.post("/test-embedding")
+async def test_embedding_connection(data: EmbeddingTestRequest):
+    """测试 Embedding API 配置是否正确"""
+    import time
+    from openai import AsyncOpenAI
+
+    try:
+        client = AsyncOpenAI(api_key=data.api_key, base_url=data.api_base_url)
+        test_text = "这是一个测试文本，用于验证 Embedding API 配置是否正确。"
+        start_time = time.time()
+
+        params = {"model": data.model, "input": test_text}
+        if "text-embedding-3" in data.model:
+            params["dimensions"] = 1536
+
+        response = await client.embeddings.create(**params)
+        elapsed_ms = int((time.time() - start_time) * 1000)
+
+        embedding = response.data[0].embedding
+        dimensions = len(embedding)
+
+        return {
+            "success": True,
+            "message": "Embedding API 配置正确",
+            "model": data.model,
+            "dimensions": dimensions,
+            "response_time_ms": elapsed_ms,
+            "api_base_url": data.api_base_url
+        }
+
+    except Exception as e:
+        error_msg = str(e)
+        suggestions = []
+        if "401" in error_msg or "Unauthorized" in error_msg:
+            suggestions.append("请检查 API 密钥是否正确")
+        elif "404" in error_msg:
+            suggestions.append("请检查模型名称和 API 地址")
+        elif "connection" in error_msg.lower() or "timeout" in error_msg.lower():
+            suggestions.append("请检查网络连接和 API 地址")
+        else:
+            suggestions.append("请检查 API 配置是否正确")
+
+        return {
+            "success": False,
+            "message": "Embedding API 测试失败",
+            "error": error_msg,
+            "suggestions": suggestions
+        }
+
+
 class ApiTestRequest(BaseModel):
     """API 测试请求模型"""
     api_key: str

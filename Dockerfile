@@ -4,29 +4,26 @@
 # 构建参数
 ARG USE_CN_MIRROR=false
 
-# 阶段1: 构建前端
-FROM node:22-alpine AS frontend-builder
+# 阶段1: 构建前端 (使用 slim 而非 alpine 解决 esbuild 兼容性问题)
+FROM node:20-slim AS frontend-builder
 
 ARG USE_CN_MIRROR
 
 WORKDIR /frontend
-
-# 复制前端依赖文件
-COPY frontend/package*.json ./
 
 # 根据参数决定是否使用国内npm镜像
 RUN if [ "$USE_CN_MIRROR" = "true" ]; then \
         npm config set registry https://registry.npmmirror.com; \
     fi
 
-# 删除 package-lock.json 以避免因镜像源不一致导致的 404 错误
-RUN rm -f package-lock.json
-
-# 安装依赖
-RUN npm install
-
-# 复制前端源代码
+# 复制前端源代码（.dockerignore 会排除 node_modules）
 COPY frontend/ ./
+
+# 删除可能存在的 lock 文件和 node_modules，确保干净安装
+RUN rm -rf node_modules package-lock.json
+
+# 安装依赖（全新安装，确保 esbuild 正确编译）
+RUN npm install
 
 # 临时修改vite配置，使其输出到dist目录（而不是../backend/static）
 RUN sed -i "s|outDir: '../backend/static'|outDir: 'dist'|g" vite.config.ts

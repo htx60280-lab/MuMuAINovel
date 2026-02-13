@@ -158,6 +158,10 @@ async def world_building_generator(
                     logger.info(f"   清洗后预览: {cleaned_text[:300]}...")
                     
                     world_data = json.loads(cleaned_text)
+                    # 验证world_data是字典类型
+                    if not isinstance(world_data, dict):
+                        logger.error(f"❌ 世界观数据类型错误: {type(world_data).__name__}")
+                        raise ValueError(f"AI返回的世界观数据格式不正确，期望字典，实际为{type(world_data).__name__}")
                     logger.info(f"✅ 世界观JSON解析成功（尝试{world_retry_count+1}/{MAX_WORLD_RETRIES}）")
                     world_generation_success = True  # 解析成功，标记完成
                             
