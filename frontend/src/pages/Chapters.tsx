@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, Pagination, FloatButton } from 'antd';
+import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, Pagination, FloatButton, Typography } from 'antd';
 import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, FormOutlined, PlusOutlined, ReadOutlined, AuditOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { useChapterSync } from '../store/hooks';
-import { projectApi, writingStyleApi, chapterApi } from '../services/api';
+import { projectApi, writingStyleApi, chapterApi, stateChangeApi } from '../services/api';
 import type { Chapter, ChapterUpdate, ApiError, WritingStyle, AnalysisTask, ExpansionPlanData, ReviewResult } from '../types';
 import type { TextAreaRef } from 'antd/es/input/TextArea';
 import ChapterAnalysis from '../components/ChapterAnalysis';
@@ -17,10 +17,18 @@ import ChapterReviewModal from '../components/ChapterReviewModal';
 import StateChangeConfirmModal from '../components/StateChangeConfirmModal';
 
 const { TextArea } = Input;
+const { Paragraph } = Typography;
 
 // localStorage 缓存键名
 const WORD_COUNT_CACHE_KEY = 'chapter_default_word_count';
 const DEFAULT_WORD_COUNT = 3000;
+const WORLD_STATE_KNOWN_KEYS = new Set([
+  'current_location',
+  'inventory',
+  'relationships',
+  'status_changes',
+  'last_time_reference'
+]);
 
 // 从 localStorage 读取缓存的字数
 const getCachedWordCount = (): number => {
@@ -751,6 +759,75 @@ export default function Chapters() {
       '全知视角': '全知视角',
     };
     return texts[perspective || ''] || '第三人称（默认）';
+  };
+
+  // 世界状态展示辅助方法
+  const worldState = ((currentProject as { world_state?: Record<string, unknown> }).world_state || {}) as Record<string, unknown>;
+  const worldStateExtraEntries = Object.entries(worldState).filter(([key]) => !WORLD_STATE_KNOWN_KEYS.has(key));
+
+  const formatWorldStateValue = (value: unknown): string => {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  };
+
+  const renderWorldStateText = (value: unknown, emptyText = '未设定') => {
+    if (value === null || value === undefined || value === '') {
+      return <span style={{ color: 'rgba(0,0,0,0.45)' }}>{emptyText}</span>;
+    }
+    return <span style={{ wordBreak: 'break-word' }}>{formatWorldStateValue(value)}</span>;
+  };
+
+  const renderWorldStateArray = (value: unknown, emptyText = '暂无') => {
+    if (!Array.isArray(value) || value.length === 0) {
+      return <span style={{ color: 'rgba(0,0,0,0.45)' }}>{emptyText}</span>;
+    }
+    return (
+      <Space wrap>
+        {value.map((item, index) => (
+          <Tag key={`${formatWorldStateValue(item)}-${index}`} color="cyan">
+            {formatWorldStateValue(item)}
+          </Tag>
+        ))}
+      </Space>
+    );
+  };
+
+  const renderWorldStatePairs = (value: unknown, emptyText = '暂无') => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return <span style={{ color: 'rgba(0,0,0,0.45)' }}>{emptyText}</span>;
+    }
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (entries.length === 0) {
+      return <span style={{ color: 'rgba(0,0,0,0.45)' }}>{emptyText}</span>;
+    }
+    return (
+      <Space direction="vertical" size={4} style={{ width: '100%' }}>
+        {entries.map(([key, itemValue]) => (
+          <div key={key} style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+            <Tag color="geekblue" style={{ margin: 0 }}>
+              {key}
+            </Tag>
+            <span style={{ wordBreak: 'break-word' }}>{formatWorldStateValue(itemValue)}</span>
+          </div>
+        ))}
+      </Space>
+    );
+  };
+
+  const renderWorldStateValue = (value: unknown, emptyText = '暂无') => {
+    if (Array.isArray(value)) {
+      return renderWorldStateArray(value, emptyText);
+    }
+    if (value && typeof value === 'object') {
+      return renderWorldStatePairs(value, emptyText);
+    }
+    return renderWorldStateText(value, emptyText);
   };
 
   const canGenerateChapter = (chapter: Chapter): boolean => {
@@ -1869,6 +1946,42 @@ export default function Chapters() {
     setReviewModalVisible(true);
   };
 
+  const hasPendingStateChange = (
+    pendingStateChange: Chapter['pending_state_change'] | null | undefined
+  ): boolean => {
+    if (!pendingStateChange) {
+      return false;
+    }
+
+    return (
+      (pendingStateChange.items_gained?.length || 0) > 0 ||
+      (pendingStateChange.items_lost?.length || 0) > 0 ||
+      !!pendingStateChange.location_change?.to ||
+      Object.keys(pendingStateChange.relationships || {}).length > 0 ||
+      Object.keys(pendingStateChange.status_changes || {}).length > 0 ||
+      !!pendingStateChange.time_passed
+    );
+  };
+
+  const handleOpenStateConfirm = async (chapter: Chapter) => {
+    try {
+      const response = await stateChangeApi.getPendingStateChange(chapter.id);
+      if (!response.has_pending || !response.pending_state_change || !hasPendingStateChange(response.pending_state_change)) {
+        message.info('该章节暂无待确认的状态变化');
+        return;
+      }
+
+      setStateConfirmChapter({
+        ...chapter,
+        pending_state_change: response.pending_state_change,
+      });
+      setStateConfirmModalVisible(true);
+    } catch (error) {
+      console.error('获取状态变化失败:', error);
+      message.error('获取状态变化失败，请重试');
+    }
+  };
+
   // 应用局部重写结果
   const handleApplyPartialRegenerate = (newText: string, startPos: number, endPos: number) => {
     // 获取当前内容
@@ -1972,6 +2085,66 @@ export default function Chapters() {
         </Space>
       </div>
 
+      <Collapse
+        bordered={false}
+        defaultActiveKey={[]}
+        expandIconPosition="end"
+        style={{
+          marginBottom: isMobile ? 12 : 16,
+          background: '#fff',
+          borderRadius: 8,
+          border: '1px solid #f0f0f0'
+        }}
+      >
+        <Collapse.Panel
+          key="world-state"
+          header={(
+            <Space size={8}>
+              <SettingOutlined style={{ color: 'var(--color-primary)' }} />
+              <span>世界状态</span>
+            </Space>
+          )}
+          style={{ border: 'none' }}
+        >
+          <Descriptions
+            size="small"
+            column={isMobile ? 1 : 2}
+            layout="vertical"
+            bordered
+          >
+            <Descriptions.Item label="当前位置">
+              {renderWorldStateText(worldState.current_location)}
+            </Descriptions.Item>
+            <Descriptions.Item label="时间线">
+              {renderWorldStateText(worldState.last_time_reference)}
+            </Descriptions.Item>
+            <Descriptions.Item label="持有物品">
+              {renderWorldStateArray(worldState.inventory)}
+            </Descriptions.Item>
+            <Descriptions.Item label="人物关系">
+              {renderWorldStatePairs(worldState.relationships)}
+            </Descriptions.Item>
+            <Descriptions.Item label="状态变化">
+              {renderWorldStatePairs(worldState.status_changes)}
+            </Descriptions.Item>
+            {worldStateExtraEntries.length > 0 && (
+              <Descriptions.Item label="其他状态">
+                <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                  {worldStateExtraEntries.map(([key, value]) => (
+                    <div key={key} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                      <Tag color="purple" style={{ margin: 0 }}>
+                        {key}
+                      </Tag>
+                      {renderWorldStateValue(value)}
+                    </div>
+                  ))}
+                </Space>
+              </Descriptions.Item>
+            )}
+          </Descriptions>
+        </Collapse.Panel>
+      </Collapse>
+
       <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
         {chapters.length === 0 ? (
           <Empty description="还没有章节，开始创作吧！" />
@@ -2049,6 +2222,19 @@ export default function Chapters() {
                   >
                     修改
                   </Button>,
+                  <Button
+                    type="text"
+                    icon={<FormOutlined />}
+                    onClick={() => handleOpenStateConfirm(item)}
+                    disabled={!hasPendingStateChange(item.pending_state_change)}
+                    title={
+                      hasPendingStateChange(item.pending_state_change)
+                        ? '确认状态变化'
+                        : '暂无待确认的状态变化'
+                    }
+                  >
+                    状态确认
+                  </Button>,
                 ]}
               >
                 <div style={{ width: '100%' }}>
@@ -2079,10 +2265,12 @@ export default function Chapters() {
                     }
                     description={
                       item.content ? (
-                        <div style={{ marginTop: 8, color: 'rgba(0,0,0,0.65)', lineHeight: 1.6, fontSize: isMobile ? 12 : 14 }}>
-                          {item.content.substring(0, isMobile ? 80 : 150)}
-                          {item.content.length > (isMobile ? 80 : 150) && '...'}
-                        </div>
+                        <Paragraph
+                          ellipsis={{ rows: isMobile ? 3 : 6, expandable: true, symbol: '展开' }}
+                          style={{ marginTop: 8, marginBottom: 0, color: 'rgba(0,0,0,0.65)', lineHeight: 1.6, fontSize: isMobile ? 12 : 14 }}
+                        >
+                          {item.content}
+                        </Paragraph>
                       ) : (
                         <span style={{ color: 'rgba(0,0,0,0.45)', fontSize: isMobile ? 12 : 14 }}>暂无内容</span>
                       )
@@ -2133,6 +2321,18 @@ export default function Chapters() {
                         onClick={() => handleOpenModal(item.id)}
                         size="small"
                         title="修改"
+                      />
+                      <Button
+                        type="text"
+                        icon={<FormOutlined />}
+                        onClick={() => handleOpenStateConfirm(item)}
+                        size="small"
+                        title={
+                          hasPendingStateChange(item.pending_state_change)
+                            ? '确认状态变化'
+                            : '暂无待确认的状态变化'
+                        }
+                        disabled={!hasPendingStateChange(item.pending_state_change)}
                       />
                     </Space>
                   )}
@@ -2245,6 +2445,19 @@ export default function Chapters() {
                         >
                           修改
                         </Button>,
+                        <Button
+                          type="text"
+                          icon={<FormOutlined />}
+                          onClick={() => handleOpenStateConfirm(item)}
+                          disabled={!hasPendingStateChange(item.pending_state_change)}
+                          title={
+                            hasPendingStateChange(item.pending_state_change)
+                              ? '确认状态变化'
+                              : '暂无待确认的状态变化'
+                          }
+                        >
+                          状态确认
+                        </Button>,
                         // 只在 one-to-many 模式下显示删除按钮
                         ...(currentProject.outline_mode === 'one-to-many' ? [
                           <Popconfirm
@@ -2313,12 +2526,14 @@ export default function Chapters() {
                             </div>
                           }
                           description={
-                            item.content ? (
-                              <div style={{ marginTop: 8, color: 'rgba(0,0,0,0.65)', lineHeight: 1.6, fontSize: isMobile ? 12 : 14 }}>
-                                {item.content.substring(0, isMobile ? 80 : 150)}
-                                {item.content.length > (isMobile ? 80 : 150) && '...'}
-                              </div>
-                            ) : (
+                          item.content ? (
+                            <Paragraph
+                              ellipsis={{ rows: isMobile ? 3 : 6, expandable: true, symbol: '展开' }}
+                              style={{ marginTop: 8, marginBottom: 0, color: 'rgba(0,0,0,0.65)', lineHeight: 1.6, fontSize: isMobile ? 12 : 14 }}
+                            >
+                              {item.content}
+                            </Paragraph>
+                          ) : (
                               <span style={{ color: 'rgba(0,0,0,0.45)', fontSize: isMobile ? 12 : 14 }}>暂无内容</span>
                             )
                           }
@@ -2368,6 +2583,18 @@ export default function Chapters() {
                               onClick={() => handleOpenModal(item.id)}
                               size="small"
                               title="修改"
+                            />
+                            <Button
+                              type="text"
+                              icon={<FormOutlined />}
+                              onClick={() => handleOpenStateConfirm(item)}
+                              size="small"
+                              title={
+                                hasPendingStateChange(item.pending_state_change)
+                                  ? '确认状态变化'
+                                  : '暂无待确认的状态变化'
+                              }
+                              disabled={!hasPendingStateChange(item.pending_state_change)}
                             />
                             {/* 只在 one-to-many 模式下显示删除按钮 */}
                             {currentProject.outline_mode === 'one-to-many' && (
@@ -3073,10 +3300,12 @@ export default function Chapters() {
           onConfirm={() => {
             setStateConfirmModalVisible(false);
             setStateConfirmChapter(null);
+            refreshChapters();
           }}
           onReject={() => {
             setStateConfirmModalVisible(false);
             setStateConfirmChapter(null);
+            refreshChapters();
           }}
           onClose={() => {
             setStateConfirmModalVisible(false);

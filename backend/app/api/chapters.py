@@ -1,11 +1,11 @@
 """章节管理API"""
 from fastapi import APIRouter, Depends, HTTPException, Request, Query, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, desc
 from sqlalchemy.orm import selectinload
 import json
 import asyncio
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import datetime
 from asyncio import Queue, Lock
 
@@ -57,6 +57,7 @@ from app.services.foreshadow_service import foreshadow_service
 from app.services.chapter_regenerator import ChapterRegenerator
 from app.services.chapter_memory_service import ChapterMemoryService
 from app.services.critic_agent import CriticAgent
+from app.services.context_manager import ContextAgent
 from app.logger import get_logger
 from app.api.settings import get_user_ai_service
 from app.utils.sse_response import SSEResponse, create_sse_response
@@ -75,6 +76,245 @@ async def get_db_write_lock(user_id: str) -> Lock:
         db_write_locks[user_id] = Lock()
         logger.debug(f"🔒 为用户 {user_id} 创建数据库写入锁")
     return db_write_locks[user_id]
+
+
+def _merge_system_prompts(*parts: Optional[str]) -> Optional[str]:
+    """合并多个 system_prompt 片段，自动忽略空值。"""
+    merged = [part.strip() for part in parts if part and part.strip()]
+    return "\n\n".join(merged) if merged else None
+
+
+async def _enhance_prompt_with_context_agent(
+    db_session: AsyncSession,
+    base_prompt: str,
+    project_id: str,
+    chapter_number: int,
+    chapter_outline: str,
+    user_id: str,
+    top_k: int = 5,
+) -> Dict[str, Any]:
+    """生成前注入 Context Agent 检索上下文。"""
+    try:
+        context_agent = ContextAgent(db=db_session, use_pgvector=True)
+        context_result = await context_agent.build_generation_context(
+            project_id=project_id,
+            chapter_number=chapter_number,
+            chapter_outline=chapter_outline or "本章剧情推进",
+            user_id=user_id,
+            top_k=top_k,
+        )
+
+        context_string = (context_result.context_string or "").strip()
+        enhanced_prompt = base_prompt
+        if context_string:
+            enhanced_prompt = (
+                f"{base_prompt}\n\n"
+                f"【Context Agent 增强上下文（必须遵守）】\n"
+                f"{context_string}"
+            )
+
+        return {
+            "prompt": enhanced_prompt,
+            "system_prompt": (context_result.system_prompt or "").strip(),
+            "metadata": context_result.metadata or {},
+            "enabled": bool(context_string or context_result.system_prompt),
+        }
+    except Exception as e:
+        logger.warning(f"⚠️ Context Agent 注入失败，降级使用原提示词: {e}")
+        return {
+            "prompt": base_prompt,
+            "system_prompt": "",
+            "metadata": {},
+            "enabled": False,
+        }
+
+
+async def _build_quick_review_data(
+    db_session: AsyncSession,
+    project: Project,
+    chapter: Chapter,
+    chapter_outline: str,
+) -> Dict[str, Any]:
+    """构建 CriticAgent 快速审查所需上下文数据。"""
+    characters_result = await db_session.execute(
+        select(Character).where(Character.project_id == project.id)
+    )
+    characters = characters_result.scalars().all()
+    character_settings = "\n".join([
+        f"- {c.name}: {c.personality or '无性格描述'}"
+        for c in characters
+    ]) if characters else "暂无角色设定"
+
+    previous_summary = "无前文摘要"
+    if chapter.chapter_number > 1:
+        previous_summary_result = await db_session.execute(
+            select(Chapter.summary)
+            .where(Chapter.project_id == project.id)
+            .where(Chapter.chapter_number == chapter.chapter_number - 1)
+        )
+        previous_summary = previous_summary_result.scalar_one_or_none() or "无前文摘要"
+
+    recent_rows_result = await db_session.execute(
+        select(Chapter.chapter_number, Chapter.title, Chapter.summary)
+        .where(Chapter.project_id == project.id)
+        .where(Chapter.chapter_number < chapter.chapter_number)
+        .where(Chapter.summary.isnot(None))
+        .order_by(desc(Chapter.chapter_number))
+        .limit(3)
+    )
+    recent_rows = list(recent_rows_result.all())
+    if recent_rows:
+        previous_summaries = "\n".join([
+            f"第{row.chapter_number}章《{row.title}》: {row.summary}"
+            for row in reversed(recent_rows)
+        ])
+    else:
+        previous_summaries = "无前文摘要"
+
+    world_state = project.world_state or {}
+    inventory_value = world_state.get("inventory", [])
+    if isinstance(inventory_value, list):
+        inventory_text = ", ".join(inventory_value) or "无"
+    else:
+        inventory_text = str(inventory_value or "无")
+
+    relationships_value = world_state.get("relationships", {})
+    if isinstance(relationships_value, (dict, list)):
+        relationships_text = json.dumps(relationships_value, ensure_ascii=False)
+    else:
+        relationships_text = str(relationships_value or "无")
+
+    return {
+        "chapter_number": chapter.chapter_number,
+        "title": chapter.title or "",
+        "summary": chapter_outline or "",
+        "character_settings": character_settings,
+        "previous_summary": previous_summary,
+        "previous_summaries": previous_summaries,
+        "world_time_period": getattr(project, "world_time_period", None) or "未设定",
+        "world_location": getattr(project, "world_location", None) or "未设定",
+        "world_rules": getattr(project, "world_rules", None) or "未设定",
+        "current_location": world_state.get("current_location", "未知"),
+        "inventory": inventory_text,
+        "relationships": relationships_text,
+    }
+
+
+async def _apply_quality_gate_with_rewrite(
+    db_session: AsyncSession,
+    ai_service: AIService,
+    project: Project,
+    chapter: Chapter,
+    chapter_outline: str,
+    current_content: str,
+    base_prompt: str,
+    system_prompt: Optional[str],
+    max_tokens: int,
+    model: Optional[str] = None,
+) -> Dict[str, Any]:
+    """生成后执行质量门控，未通过时注入反馈自动重写。"""
+    pass_threshold = float(settings.quality_gate_pass_threshold)
+    max_rewrites = max(0, int(settings.quality_gate_max_retries))
+
+    critic_agent = CriticAgent(db=db_session, ai_service=ai_service)
+    review_data = await _build_quick_review_data(
+        db_session=db_session,
+        project=project,
+        chapter=chapter,
+        chapter_outline=chapter_outline,
+    )
+
+    rewrite_count = 0
+    final_review: Dict[str, Any] = {
+        "passed": True,
+        "overall_score": 0,
+        "feedback": "",
+        "details": {},
+    }
+
+    for attempt in range(max_rewrites + 1):
+        final_review = await critic_agent.quick_review_content(
+            content=current_content,
+            chapter_data=review_data,
+            pass_threshold=pass_threshold,
+        )
+        if final_review.get("passed", True):
+            break
+
+        if attempt >= max_rewrites:
+            break
+
+        rewrite_count += 1
+        feedback = final_review.get("feedback") or "请重点修复角色一致性和设定一致性问题。"
+        rewrite_prompt = f"""请对下面章节进行完整重写，修复审查问题。
+
+【原始创作任务】
+{base_prompt}
+
+【审查反馈（必须修复）】
+{feedback}
+
+【当前章节内容】
+{current_content}
+
+【重写要求】
+1. 保留本章核心事件和剧情目标，不偏离原大纲
+2. 优先修复角色行为一致性和设定一致性问题
+3. 字数尽量保持在目标字数附近，可上下浮动15%
+4. 直接输出重写后的章节正文，不要任何解释"""
+
+        rewrite_response = await ai_service.generate_text(
+            prompt=rewrite_prompt,
+            system_prompt=system_prompt,
+            max_tokens=max_tokens,
+            model=model,
+            tool_choice="required",
+        )
+        rewritten_content = (
+            rewrite_response.get("content", "")
+            if isinstance(rewrite_response, dict)
+            else str(rewrite_response)
+        ).strip()
+
+        if not rewritten_content:
+            logger.warning(f"⚠️ 质量门控重写返回空内容，停止后续重写: chapter={chapter.id[:8]}")
+            break
+
+        current_content = rewritten_content
+
+    return {
+        "content": current_content,
+        "rewrite_count": rewrite_count,
+        "passed": bool(final_review.get("passed", True)),
+        "overall_score": float(final_review.get("overall_score", 0)),
+        "review": final_review,
+    }
+
+
+async def _run_data_agent_pipeline(
+    db_session: AsyncSession,
+    ai_service: AIService,
+    chapter: Chapter,
+    content: str,
+    characters_mentioned: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """生成后执行 Data Agent：切片向量化 + 状态提取 + 摘要钩子同步。"""
+    try:
+        service = ChapterMemoryService(db=db_session, ai_service=ai_service)
+        return await service.process_and_store_chapter(
+            chapter_id=chapter.id,
+            content=content,
+            chapter_number=chapter.chapter_number,
+            project_id=chapter.project_id,
+            characters_mentioned=characters_mentioned,
+        )
+    except Exception as e:
+        logger.warning(f"⚠️ Data Agent 执行失败（不阻塞主流程）: {e}")
+        return {
+            "stored_count": 0,
+            "state_change_log": None,
+            "error": str(e),
+        }
 
 
 @router.post("", response_model=ChapterResponse, summary="创建章节")
@@ -154,6 +394,9 @@ async def get_project_chapters(
             "outline_id": chapter.outline_id,
             "sub_index": chapter.sub_index,
             "expansion_plan": chapter.expansion_plan,
+            "end_hook": chapter.end_hook,
+            "review_result": chapter.review_result,
+            "pending_state_change": chapter.pending_state_change,
             "created_at": chapter.created_at,
             "updated_at": chapter.updated_at,
         }
@@ -1613,13 +1856,31 @@ async def generate_chapter_content_stream(
                     prompt = WritingStyleManager.apply_style_to_prompt(base_prompt, style_content)
                 else:
                     prompt = base_prompt
-                
+
+                # Context Agent 增强上下文（防遗忘）
+                context_enhancement = await _enhance_prompt_with_context_agent(
+                    db_session=db_session,
+                    base_prompt=prompt,
+                    project_id=project.id,
+                    chapter_number=current_chapter.chapter_number,
+                    chapter_outline=chapter_context.chapter_outline,
+                    user_id=current_user_id,
+                    top_k=5,
+                )
+                prompt = context_enhancement["prompt"]
+                context_system_prompt = context_enhancement["system_prompt"]
+                if context_enhancement.get("enabled"):
+                    logger.info(
+                        f"✅ Context Agent 已注入: 检索片段={context_enhancement.get('metadata', {}).get('retrieved_chunks', 0)}, "
+                        f"摘要={context_enhancement.get('metadata', {}).get('summaries_count', 0)}"
+                    )
+
                 # === 准备阶段 ===
                 yield await tracker.preparing("准备AI提示词...")
                 
                 logger.info(f"开始AI流式创作章节 {chapter_id}")
                 
-                # 🎨 方案一：将写作风格注入到系统提示词（最高优先级）
+                # 🎨 写作风格 + Context Agent 系统提示词拼接（最高优先级）
                 system_prompt_with_style = None
                 if style_content:
                     system_prompt_with_style = f"""【🎨 写作风格要求 - 最高优先级】
@@ -1629,6 +1890,11 @@ async def generate_chapter_content_stream(
 ⚠️ 请严格遵循上述写作风格要求进行创作，这是最重要的指令！
 确保在整个章节创作过程中始终保持风格的一致性。"""
                     logger.info(f"✅ 已将写作风格注入系统提示词（{len(style_content)}字符）")
+
+                final_system_prompt = _merge_system_prompts(
+                    system_prompt_with_style,
+                    context_system_prompt,
+                )
                 
                 # 🔢 计算 max_tokens 限制
                 # 中文字符约 1.5-2 个 token，使用 2.5 倍系数确保有足够空间完成段落
@@ -1640,7 +1906,7 @@ async def generate_chapter_content_stream(
                 # 准备生成参数
                 generate_kwargs = {
                     "prompt": prompt,
-                    "system_prompt": system_prompt_with_style,
+                    "system_prompt": final_system_prompt,
                     "tool_choice": "required",
                     "max_tokens": calculated_max_tokens  # 添加 max_tokens 限制
                 }
@@ -1680,6 +1946,30 @@ async def generate_chapter_content_stream(
                     
                     await asyncio.sleep(0)  # 让出控制权
                 
+                # === 质量门控阶段 ===
+                yield await tracker.preparing("执行质量门控审查...")
+                quality_gate_result = await _apply_quality_gate_with_rewrite(
+                    db_session=db_session,
+                    ai_service=user_ai_service,
+                    project=project,
+                    chapter=current_chapter,
+                    chapter_outline=chapter_context.chapter_outline,
+                    current_content=full_content,
+                    base_prompt=prompt,
+                    system_prompt=final_system_prompt,
+                    max_tokens=calculated_max_tokens,
+                    model=custom_model,
+                )
+                full_content = quality_gate_result["content"]
+                if quality_gate_result.get("rewrite_count", 0) > 0:
+                    yield await tracker.warning(
+                        f"质量门控触发重写 {quality_gate_result['rewrite_count']} 次，当前评分 {quality_gate_result['overall_score']:.1f}"
+                    )
+                elif not quality_gate_result.get("passed", True):
+                    yield await tracker.warning(
+                        f"质量门控未达阈值，保留当前版本（评分 {quality_gate_result['overall_score']:.1f}）"
+                    )
+
                 # === 保存阶段 ===
                 yield await tracker.saving("正在保存章节...", 0.3)
                 
@@ -1708,6 +1998,27 @@ async def generate_chapter_content_stream(
                 await db_session.refresh(current_chapter)
                 
                 logger.info(f"成功创作章节 {chapter_id}，共 {new_word_count} 字")
+
+                # 触发后台审查（不阻塞主流程）
+                background_tasks.add_task(
+                    review_chapter_background,
+                    chapter_id=chapter_id,
+                    user_id=current_user_id,
+                    ai_service=user_ai_service
+                )
+                logger.info(f"🔍 已触发后台审查: chapter_id={chapter_id[:8]}")
+
+                # Data Agent：章节切片向量化 + 状态提取 + 摘要钩子同步
+                data_agent_result = await _run_data_agent_pipeline(
+                    db_session=db_session,
+                    ai_service=user_ai_service,
+                    chapter=current_chapter,
+                    content=full_content,
+                )
+                logger.info(
+                    f"📦 Data Agent 完成: chunks={data_agent_result.get('stored_count', 0)}, "
+                    f"state_change={'yes' if data_agent_result.get('state_change_log') else 'no'}"
+                )
                 
                 # 🔮 章节生成后自动标记计划在本章埋入的伏笔
                 try:
@@ -3153,6 +3464,24 @@ async def generate_single_chapter_for_batch(
         prompt = WritingStyleManager.apply_style_to_prompt(base_prompt, style_content)
     else:
         prompt = base_prompt
+
+    # Context Agent 增强上下文（防遗忘）
+    context_enhancement = await _enhance_prompt_with_context_agent(
+        db_session=db_session,
+        base_prompt=prompt,
+        project_id=project.id,
+        chapter_number=chapter.chapter_number,
+        chapter_outline=chapter_context.chapter_outline,
+        user_id=user_id,
+        top_k=5,
+    )
+    prompt = context_enhancement["prompt"]
+    context_system_prompt = context_enhancement["system_prompt"]
+    if context_enhancement.get("enabled"):
+        logger.info(
+            f"✅ 批量生成 Context Agent 已注入: 检索片段={context_enhancement.get('metadata', {}).get('retrieved_chunks', 0)}, "
+            f"摘要={context_enhancement.get('metadata', {}).get('summaries_count', 0)}"
+        )
     
     # 🎨 方案一：将写作风格注入到系统提示词（批量生成）
     system_prompt_with_style = None
@@ -3164,6 +3493,11 @@ async def generate_single_chapter_for_batch(
 ⚠️ 请严格遵循上述写作风格要求进行创作，这是最重要的指令！
 确保在整个章节创作过程中始终保持风格的一致性。"""
         logger.info(f"✅ 批量生成 - 已将写作风格注入系统提示词（{len(style_content)}字符）")
+
+    final_system_prompt = _merge_system_prompts(
+        system_prompt_with_style,
+        context_system_prompt,
+    )
     
     # 🔢 计算 max_tokens 限制（批量生成）
     # 中文字符约 1.5-2 个 token，使用 2.5 倍系数确保有足够空间完成段落
@@ -3177,7 +3511,7 @@ async def generate_single_chapter_for_batch(
     # 准备生成参数
     generate_kwargs = {
         "prompt": prompt,
-        "system_prompt": system_prompt_with_style,
+        "system_prompt": final_system_prompt,
         "tool_choice": "required",
         "max_tokens": calculated_max_tokens  # 添加 max_tokens 限制
     }
@@ -3190,6 +3524,26 @@ async def generate_single_chapter_for_batch(
     async for chunk in ai_service.generate_text_stream(**generate_kwargs):
         full_content += chunk
     
+    # 生成后质量门控（防幻觉）
+    quality_gate_result = await _apply_quality_gate_with_rewrite(
+        db_session=db_session,
+        ai_service=ai_service,
+        project=project,
+        chapter=chapter,
+        chapter_outline=chapter_context.chapter_outline,
+        current_content=full_content,
+        base_prompt=prompt,
+        system_prompt=final_system_prompt,
+        max_tokens=calculated_max_tokens,
+        model=custom_model,
+    )
+    full_content = quality_gate_result["content"]
+    if quality_gate_result.get("rewrite_count", 0) > 0:
+        logger.info(
+            f"🔁 批量生成质量门控触发重写 {quality_gate_result['rewrite_count']} 次，"
+            f"当前评分 {quality_gate_result['overall_score']:.1f}"
+        )
+
     # 更新章节内容到数据库（使用锁保护）
     async with write_lock:
         old_word_count = chapter.word_count or 0
@@ -3215,6 +3569,31 @@ async def generate_single_chapter_for_batch(
         await db_session.refresh(chapter)
     
     logger.info(f"✅ 单章节生成完成: 第{chapter.chapter_number}章，共 {new_word_count} 字")
+
+    # 触发后台审查（不阻塞主流程）
+    try:
+        asyncio.create_task(
+            review_chapter_background(
+                chapter_id=chapter.id,
+                user_id=user_id,
+                ai_service=ai_service
+            )
+        )
+        logger.info(f"🔍 批量生成已触发后台审查: chapter_id={chapter.id[:8]}")
+    except Exception as review_error:
+        logger.warning(f"⚠️ 批量生成触发后台审查失败: {review_error}")
+
+    # Data Agent：章节切片向量化 + 状态提取 + 摘要钩子同步
+    data_agent_result = await _run_data_agent_pipeline(
+        db_session=db_session,
+        ai_service=ai_service,
+        chapter=chapter,
+        content=full_content,
+    )
+    logger.info(
+        f"📦 批量生成 Data Agent 完成: chunks={data_agent_result.get('stored_count', 0)}, "
+        f"state_change={'yes' if data_agent_result.get('state_change_log') else 'no'}"
+    )
     
     # 生成简短摘要返回
     summary_preview = full_content[:300].replace('\n', ' ') if full_content else ""
