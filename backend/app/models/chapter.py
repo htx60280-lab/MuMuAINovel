@@ -28,6 +28,10 @@ class Chapter(Base):
     # 章节记忆与审查相关字段
     end_hook = Column(JSON, comment="章节结尾钩子: {type, content, must_respond_next}")
     review_result = Column(JSON, comment="AI审查结果缓存: {overall_score, dimensions, reviewed_at}")
+    state_change_log = Column(
+        JSON,
+        comment="本章状态变更: {location_change, items_gained, items_lost, status_changes, relationships, time_passed, summary}"
+    )
     pending_state_change = Column(JSON, comment="待确认的状态变化")
 
     created_at = Column(DateTime, server_default=func.now(), comment="创建时间")

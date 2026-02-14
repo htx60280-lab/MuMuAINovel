@@ -240,38 +240,73 @@ class ChapterMemoryService:
                 logger.warning(f"⚠️ 章节不存在: {chapter_id}")
                 return False
 
+            if not isinstance(state_change, dict):
+                logger.warning(f"⚠️ 状态变更数据类型错误: {type(state_change).__name__}")
+                return False
+
             chapter.state_change_log = state_change
 
             # 同步摘要到 chapter.summary（摘要直接同步，无需确认）
-            if state_change.get("summary"):
-                chapter.summary = state_change["summary"]
-                logger.info(f"📝 摘要已同步: {state_change['summary'][:50]}...")
+            summary = state_change.get("summary")
+            if isinstance(summary, str) and summary:
+                chapter.summary = summary
+                logger.info(f"📝 摘要已同步: {summary[:50]}...")
+            elif summary is not None and not isinstance(summary, str):
+                logger.warning(f"⚠️ summary 类型错误: {type(summary).__name__}")
 
             # 同步钩子到 chapter.end_hook（钩子直接同步，无需确认）
-            if state_change.get("end_hook"):
-                chapter.end_hook = state_change["end_hook"]
-                hook_type = state_change["end_hook"].get("type", "未知")
-                must_respond = state_change["end_hook"].get("must_respond_next", False)
+            end_hook = state_change.get("end_hook")
+            if isinstance(end_hook, dict) and end_hook:
+                chapter.end_hook = end_hook
+                hook_type = end_hook.get("type", "未知")
+                must_respond = end_hook.get("must_respond_next", False)
                 logger.info(f"🎣 钩子已同步: 类型={hook_type}, 需响应={must_respond}")
+            elif end_hook is not None and not isinstance(end_hook, dict):
+                logger.warning(f"⚠️ end_hook 类型错误: {type(end_hook).__name__}")
 
             # 状态变化暂存到 pending_state_change（需要用户确认）
             pending_changes = {}
-            if state_change.get("location_change") and state_change["location_change"].get("to"):
-                pending_changes["location_change"] = state_change["location_change"]
-            if state_change.get("items_gained"):
-                pending_changes["items_gained"] = state_change["items_gained"]
-            if state_change.get("items_lost"):
-                pending_changes["items_lost"] = state_change["items_lost"]
-            if state_change.get("status_changes"):
-                pending_changes["status_changes"] = state_change["status_changes"]
-            if state_change.get("relationships"):
-                pending_changes["relationships"] = state_change["relationships"]
-            if state_change.get("time_passed"):
-                pending_changes["time_passed"] = state_change["time_passed"]
+            location_change = state_change.get("location_change")
+            if isinstance(location_change, dict) and location_change.get("to"):
+                pending_changes["location_change"] = location_change
+            elif location_change is not None and not isinstance(location_change, dict):
+                logger.warning(f"⚠️ location_change 类型错误: {type(location_change).__name__}")
+
+            items_gained = state_change.get("items_gained")
+            if isinstance(items_gained, list) and items_gained:
+                pending_changes["items_gained"] = items_gained
+            elif items_gained is not None and not isinstance(items_gained, list):
+                logger.warning(f"⚠️ items_gained 类型错误: {type(items_gained).__name__}")
+
+            items_lost = state_change.get("items_lost")
+            if isinstance(items_lost, list) and items_lost:
+                pending_changes["items_lost"] = items_lost
+            elif items_lost is not None and not isinstance(items_lost, list):
+                logger.warning(f"⚠️ items_lost 类型错误: {type(items_lost).__name__}")
+
+            status_changes = state_change.get("status_changes")
+            if isinstance(status_changes, dict) and status_changes:
+                pending_changes["status_changes"] = status_changes
+            elif status_changes is not None and not isinstance(status_changes, dict):
+                logger.warning(f"⚠️ status_changes 类型错误: {type(status_changes).__name__}")
+
+            relationships = state_change.get("relationships")
+            if isinstance(relationships, dict) and relationships:
+                pending_changes["relationships"] = relationships
+            elif relationships is not None and not isinstance(relationships, dict):
+                logger.warning(f"⚠️ relationships 类型错误: {type(relationships).__name__}")
+
+            time_passed = state_change.get("time_passed")
+            if isinstance(time_passed, str) and time_passed.strip():
+                pending_changes["time_passed"] = time_passed
+            elif time_passed is not None and not isinstance(time_passed, str):
+                logger.warning(f"⚠️ time_passed 类型错误: {type(time_passed).__name__}")
 
             if pending_changes:
                 chapter.pending_state_change = pending_changes
                 logger.info(f"⏳ 状态变化已暂存待确认: {list(pending_changes.keys())}")
+            else:
+                chapter.pending_state_change = None
 
             await self.db.commit()
 
@@ -761,6 +796,34 @@ class ChapterMemoryService:
             logger.warning(f"⚠️ AI 关键事件提取失败: {e}")
             return []
 
+    @staticmethod
+    def _is_subset_of_pending(
+        confirmed_changes: Dict[str, Any],
+        pending_changes: Dict[str, Any]
+    ) -> bool:
+        for key, confirmed_value in confirmed_changes.items():
+            if key not in pending_changes:
+                return False
+
+            pending_value = pending_changes[key]
+
+            if isinstance(confirmed_value, list):
+                if not isinstance(pending_value, list):
+                    return False
+                if any(item not in pending_value for item in confirmed_value):
+                    return False
+            elif isinstance(confirmed_value, dict):
+                if not isinstance(pending_value, dict):
+                    return False
+                for sub_key, sub_value in confirmed_value.items():
+                    if sub_key not in pending_value or pending_value[sub_key] != sub_value:
+                        return False
+            else:
+                if confirmed_value != pending_value:
+                    return False
+
+        return True
+
     async def confirm_state_change(
         self,
         chapter_id: str,
@@ -793,9 +856,31 @@ class ChapterMemoryService:
                 logger.warning(f"⚠️ 章节不存在: {chapter_id}")
                 return False
 
+            pending_changes = chapter.pending_state_change
+            if not pending_changes:
+                logger.warning("⚠️ 当前无待确认状态")
+                return False
+            if not isinstance(pending_changes, dict):
+                logger.warning(f"⚠️ pending_state_change 类型错误: {type(pending_changes).__name__}")
+                return False
+
+            if not isinstance(confirmed_changes, dict):
+                logger.warning(f"⚠️ confirmed_changes 类型错误: {type(confirmed_changes).__name__}")
+                return False
+            if not confirmed_changes:
+                logger.warning("⚠️ confirmed_changes 为空")
+                return False
+
+            if not self._is_subset_of_pending(confirmed_changes, pending_changes):
+                logger.warning("⚠️ confirmed_changes 不是 pending_state_change 子集")
+                return False
+
             # 更新全局状态
             if confirmed_changes:
-                await self._patch_world_state(chapter.project_id, confirmed_changes)
+                patched = await self._patch_world_state(chapter.project_id, confirmed_changes)
+                if not patched:
+                    logger.warning("⚠️ 全局状态更新失败，保留待确认状态")
+                    return False
 
             # 清除待确认状态
             chapter.pending_state_change = None
@@ -826,6 +911,14 @@ class ChapterMemoryService:
             chapter = result.scalar_one_or_none()
 
             if not chapter:
+                return False
+
+            pending_changes = chapter.pending_state_change
+            if not pending_changes:
+                logger.warning("⚠️ 当前无待确认状态")
+                return False
+            if not isinstance(pending_changes, dict):
+                logger.warning(f"⚠️ pending_state_change 类型错误: {type(pending_changes).__name__}")
                 return False
 
             chapter.pending_state_change = None

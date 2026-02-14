@@ -1,6 +1,6 @@
 """项目相关的Pydantic模型"""
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, Literal
+from typing import Optional, Literal, Dict, Any
 from datetime import datetime
 
 
@@ -14,6 +14,10 @@ class ProjectBase(BaseModel):
     outline_mode: Literal["one-to-one", "one-to-many"] = Field(
         default="one-to-many",
         description="大纲章节模式: one-to-one(传统模式,1大纲→1章节) 或 one-to-many(细化模式,1大纲→N章节)"
+    )
+    world_state: Optional[Dict[str, Any]] = Field(
+        None,
+        description="全局状态: {current_location, inventory, relationships, status_changes, last_time_reference}"
     )
 
 

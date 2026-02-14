@@ -6,6 +6,7 @@ import {
   MinusCircleOutlined,
   TeamOutlined,
   ClockCircleOutlined,
+  LineChartOutlined,
   CheckOutlined,
   CloseOutlined,
 } from '@ant-design/icons';
@@ -48,12 +49,14 @@ const StateChangeConfirmModal: React.FC<StateChangeConfirmModalProps> = ({
     items_lost: string[];
     location_change: boolean;
     relationships: string[];
+    status_changes: string[];
     time_passed: boolean;
   }>({
     items_gained: [],
     items_lost: [],
     location_change: false,
     relationships: [],
+    status_changes: [],
     time_passed: false,
   });
 
@@ -65,6 +68,7 @@ const StateChangeConfirmModal: React.FC<StateChangeConfirmModalProps> = ({
         items_lost: pendingStateChange.items_lost || [],
         location_change: !!pendingStateChange.location_change?.to,
         relationships: Object.keys(pendingStateChange.relationships || {}),
+        status_changes: Object.keys(pendingStateChange.status_changes || {}),
         time_passed: !!pendingStateChange.time_passed,
       });
     }
@@ -93,6 +97,18 @@ const StateChangeConfirmModal: React.FC<StateChangeConfirmModalProps> = ({
           }
         });
         confirmedChanges.relationships = selectedRelationships;
+      }
+      if (selectedItems.status_changes.length > 0 && pendingStateChange?.status_changes) {
+        const selectedStatusChanges: Record<string, number> = {};
+        selectedItems.status_changes.forEach((key) => {
+          const value = pendingStateChange.status_changes?.[key];
+          if (value !== undefined) {
+            selectedStatusChanges[key] = value;
+          }
+        });
+        if (Object.keys(selectedStatusChanges).length > 0) {
+          confirmedChanges.status_changes = selectedStatusChanges;
+        }
       }
       if (selectedItems.time_passed && pendingStateChange?.time_passed) {
         confirmedChanges.time_passed = pendingStateChange.time_passed;
@@ -128,6 +144,7 @@ const StateChangeConfirmModal: React.FC<StateChangeConfirmModalProps> = ({
     (pendingStateChange.items_lost?.length || 0) > 0 ||
     pendingStateChange.location_change?.to ||
     Object.keys(pendingStateChange.relationships || {}).length > 0 ||
+    Object.keys(pendingStateChange.status_changes || {}).length > 0 ||
     pendingStateChange.time_passed
   );
 
@@ -238,6 +255,36 @@ const StateChangeConfirmModal: React.FC<StateChangeConfirmModalProps> = ({
                   <Tag color="red">- {item}</Tag>
                 </Checkbox>
               ))}
+            </Space>
+          </Checkbox.Group>
+        </>
+      )}
+
+      {/* 状态数值变化 */}
+      {Object.keys(pendingStateChange?.status_changes || {}).length > 0 && (
+        <>
+          <Divider orientation="left" plain>
+            <LineChartOutlined /> 状态数值变化
+          </Divider>
+          <Checkbox.Group
+            value={selectedItems.status_changes}
+            onChange={(values) =>
+              setSelectedItems((prev) => ({ ...prev, status_changes: values as string[] }))
+            }
+          >
+            <Space wrap>
+              {Object.entries(pendingStateChange?.status_changes || {}).map(([key, value]) => {
+                const displayValue = value > 0 ? `+${value}` : `${value}`;
+                const color = value >= 0 ? 'green' : 'red';
+
+                return (
+                  <Checkbox key={key} value={key}>
+                    <Tag color={color}>
+                      {key} {displayValue}
+                    </Tag>
+                  </Checkbox>
+                );
+              })}
             </Space>
           </Checkbox.Group>
         </>

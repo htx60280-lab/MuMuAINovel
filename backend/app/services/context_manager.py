@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, text, desc
+from openai import AsyncOpenAI
 
 from app.models.project import Project
 from app.models.chapter import Chapter
@@ -22,6 +23,7 @@ from app.models.memory import StoryMemory
 from app.models.foreshadow import Foreshadow
 from app.models.key_event import KeyEvent
 from app.logger import get_logger
+from app.config import settings, EMBEDDING_DIMENSIONS
 
 logger = get_logger(__name__)
 
@@ -43,24 +45,57 @@ class ContextAgent:
 
         Args:
             db: 数据库会话
-            embedding_model: sentence-transformers 模型实例（可选，延迟加载）
+            embedding_model: 可选 Embedding API 客户端（AsyncOpenAI）
             use_pgvector: 是否使用 pgvector 进行向量检索
         """
         self.db = db
-        self._embedding_model = embedding_model
+        self._embedding_client = embedding_model if isinstance(embedding_model, AsyncOpenAI) else None
+        if embedding_model is not None and self._embedding_client is None:
+            logger.warning("⚠️ embedding_model 参数已弃用，仅支持 AsyncOpenAI 客户端")
         self.use_pgvector = use_pgvector
 
     @property
-    def embedding_model(self):
-        """延迟加载 embedding 模型"""
-        if self._embedding_model is None:
+    def embedding_client(self) -> Optional[AsyncOpenAI]:
+        """延迟初始化 Embedding API 客户端"""
+        if self._embedding_client is None:
             try:
-                from app.services.memory_service import memory_service
-                self._embedding_model = memory_service.embedding_model
-                logger.info("✅ Context Agent 复用 memory_service 的 embedding 模型")
+                api_key = settings.embedding_api_key or settings.openai_api_key
+                base_url = settings.embedding_base_url or settings.openai_base_url
+                if not api_key:
+                    logger.warning("⚠️ 未配置 EMBEDDING_API_KEY 或 OPENAI_API_KEY，跳过向量检索")
+                    return None
+
+                self._embedding_client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+                config_source = "环境变量 EMBEDDING_API_KEY" if settings.embedding_api_key else "环境变量 OPENAI_API_KEY"
+                logger.info(f"✅ Context Agent 初始化 Embedding 客户端: {config_source}")
             except Exception as e:
-                logger.warning(f"⚠️ 无法加载 embedding 模型: {e}")
-        return self._embedding_model
+                logger.warning(f"⚠️ Embedding 客户端初始化失败: {e}")
+                return None
+        return self._embedding_client
+
+    async def _get_query_embedding(self, text: str) -> Optional[List[float]]:
+        """使用 Embedding API 生成查询向量，失败时安全降级"""
+        if not text:
+            return None
+
+        client = self.embedding_client
+        if not client:
+            return None
+
+        try:
+            params = {
+                "model": settings.embedding_model,
+                "input": text,
+            }
+            if "text-embedding-3" in settings.embedding_model:
+                params["dimensions"] = EMBEDDING_DIMENSIONS
+
+            response = await client.embeddings.create(**params)
+            embedding = response.data[0].embedding
+            return embedding or None
+        except Exception as e:
+            logger.warning(f"⚠️ Embedding API 调用失败，跳过向量检索: {e}")
+            return None
 
     async def build_generation_context(
         self,
@@ -185,13 +220,16 @@ class ContextAgent:
         Returns:
             相关记忆片段列表
         """
-        if not self.use_pgvector or not self.embedding_model:
-            logger.warning("⚠️ pgvector 未启用或 embedding 模型不可用，跳过向量检索")
+        if not self.use_pgvector:
+            logger.warning("⚠️ pgvector 未启用，跳过向量检索")
             return []
 
         try:
             # 生成查询向量
-            query_embedding = self.embedding_model.encode(query_text).tolist()
+            query_embedding = await self._get_query_embedding(query_text)
+            if not query_embedding:
+                logger.warning("⚠️ 向量生成失败或未配置 Embedding，跳过向量检索")
+                return []
 
             # 构建 SQL 查询（使用余弦相似度）
             # 只检索当前章节之前的内容

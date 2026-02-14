@@ -107,6 +107,14 @@ export interface Project {
   world_location?: string;
   world_atmosphere?: string;
   world_rules?: string;
+  world_state?: {
+    current_location?: string | null;
+    inventory?: string[];
+    relationships?: Record<string, string>;
+    status_changes?: Record<string, number>;
+    last_time_reference?: string | null;
+    [key: string]: unknown;
+  };
   chapter_count?: number;
   narrative_perspective?: string;
   character_count?: number;
