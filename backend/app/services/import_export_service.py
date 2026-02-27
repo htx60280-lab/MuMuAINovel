@@ -756,7 +756,8 @@ class ImportExportService:
             
             # 导入大纲 - 需要在章节之前导入，以便建立关联
             outline_mapping = await ImportExportService._import_outlines(
-                new_project.id, data.get("outlines", []), db
+                new_project.id, data.get("outlines", []), db,
+                outline_mode=new_project.outline_mode
             )
             statistics["outlines"] = len(outline_mapping)
             logger.info(f"导入大纲数: {len(outline_mapping)}")
@@ -943,11 +944,12 @@ class ImportExportService:
     async def _import_outlines(
         project_id: str,
         outlines_data: List[Dict],
-        db: AsyncSession
+        db: AsyncSession,
+        outline_mode: str = "one-to-many"
     ) -> Dict[str, str]:
         """导入大纲，返回标题到ID的映射"""
         outline_mapping = {}
-        
+
         for ol_data in outlines_data:
             outline = Outline(
                 project_id=project_id,
@@ -959,7 +961,21 @@ class ImportExportService:
             db.add(outline)
             await db.flush()  # 获取ID
             outline_mapping[ol_data.get("title")] = outline.id
-        
+
+            # one-to-one模式：为每个大纲自动创建对应章节
+            if outline_mode == "one-to-one":
+                chapter = Chapter(
+                    project_id=project_id,
+                    title=outline.title,
+                    summary=outline.content,
+                    chapter_number=outline.order_index,
+                    sub_index=1,
+                    outline_id=None,
+                    status='pending',
+                    content=""
+                )
+                db.add(chapter)
+
         return outline_mapping
     
     @staticmethod

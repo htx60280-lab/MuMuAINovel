@@ -494,7 +494,7 @@ class CriticAgent:
         """
         try:
             # 使用精简的审查维度（OOC + consistency）以加快速度
-            quick_dimensions = ["ooc", "consistency"]
+            quick_dimensions = ["ooc", "consistency", "three_line_rhythm"]
 
             # 构建临时数据
             temp_data = {
@@ -521,6 +521,12 @@ class CriticAgent:
                     logger.warning(f"⚠️ 快速审查维度 {dim_name} 失败: {result}")
                     continue
                 elif isinstance(result, DimensionResult):
+                    if dim_name == "three_line_rhythm" and not result.details:
+                        result.details = {
+                            "plot": {"percentage": 0},
+                            "character": {"percentage": 0},
+                            "world": {"percentage": 0},
+                        }
                     scores.append(result.score)
                     details[dim_name] = {
                         "score": result.score,
@@ -547,8 +553,9 @@ class CriticAgent:
 
                         feedback_parts.append(feedback_part)
 
-            overall_score = sum(scores) / len(scores) if scores else 0
-            passed = overall_score >= pass_threshold and all(s >= pass_threshold * 0.8 for s in scores)
+            valid_scores = [s for s in scores if s > 0]
+            overall_score = sum(valid_scores) / len(valid_scores) if valid_scores else 0
+            passed = overall_score >= pass_threshold and all(s >= pass_threshold * 0.8 for s in valid_scores)
 
             feedback = ""
             if not passed and feedback_parts:

@@ -23,6 +23,7 @@ import {
   DownloadOutlined,
   UploadOutlined,
   CheckCircleOutlined,
+  DeleteOutlined,
   FileSearchOutlined,
   InfoCircleOutlined
 } from '@ant-design/icons';
@@ -160,6 +161,36 @@ export default function PromptTemplates() {
   };
 
   // 导出所有模板
+  const handleClearCustomTemplates = () => {
+    if (customTemplateCount === 0) {
+      message.info('当前没有自定义提示词');
+      return;
+    }
+
+    modal.confirm({
+      title: '确认清空自定义提示词',
+      content: `将删除 ${customTemplateCount} 条自定义提示词，并回退到系统默认模板。该操作不可撤销。`,
+      okText: '确认清空',
+      cancelText: '取消',
+      okButtonProps: { danger: true },
+      centered: true,
+      onOk: async () => {
+        try {
+          setLoading(true);
+          const response = await axios.delete('/api/prompt-templates/custom/all');
+          const deletedCount = response?.data?.deleted_count ?? 0;
+          message.success(`已删除 ${deletedCount} 条自定义提示词`);
+          await loadTemplates();
+        } catch (error: unknown) {
+          const err = error as { response?: { data?: { detail?: string } } };
+          message.error(err.response?.data?.detail || '清空失败');
+        } finally {
+          setLoading(false);
+        }
+      }
+    });
+  };
+
   const handleExport = async () => {
     try {
       const response = await axios.post('/api/prompt-templates/export');
@@ -246,6 +277,9 @@ export default function PromptTemplates() {
   };
 
   const currentTemplates = getCurrentTemplates();
+  const customTemplateCount = categories.reduce((sum, category) => {
+    return sum + category.templates.filter(template => !template.is_system_default).length;
+  }, 0);
 
   return (
     <>
@@ -298,6 +332,22 @@ export default function PromptTemplates() {
             <Col xs={24} sm={12} md={10}>
               <Space wrap style={{ justifyContent: isMobile ? 'flex-start' : 'flex-end', width: '100%' }}>
                 <Button
+                  danger
+                  icon={<DeleteOutlined />}
+                  onClick={handleClearCustomTemplates}
+                  disabled={customTemplateCount === 0}
+                  size={isMobile ? 'small' : 'middle'}
+                  style={{
+                    borderRadius: 12,
+                    background: customTemplateCount === 0 ? 'rgba(255, 255, 255, 0.1)' : 'rgba(220, 38, 38, 0.75)',
+                    border: '1px solid rgba(255, 255, 255, 0.3)',
+                    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
+                    color: '#fff',
+                    backdropFilter: 'blur(10px)',
+                  }}
+                >
+                  清空自定义
+                </Button>                <Button
                   icon={<DownloadOutlined />}
                   onClick={handleExport}
                   size={isMobile ? 'small' : 'middle'}

@@ -4,7 +4,7 @@
 from fastapi import APIRouter, HTTPException, Request, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Callable
 from pathlib import Path
 from pydantic import BaseModel
 from datetime import datetime
@@ -46,6 +46,156 @@ def require_login(request: Request):
     if not hasattr(request.state, "user") or not request.state.user:
         raise HTTPException(status_code=401, detail="需要登录")
     return request.state.user
+
+
+# ========== 任务渠道（Task Channels）==========
+
+VALID_TASK_TYPES = {"outline", "writing", "polish", "review"}
+
+class TaskChannelItem(BaseModel):
+    preset_id: Optional[str] = None
+
+class TaskChannelsUpdateRequest(BaseModel):
+    channels: Dict[str, TaskChannelItem]
+
+
+def _create_ai_service_from_preset(preset_config: dict, settings: Settings,
+                                   user_id: str, db: AsyncSession, enable_mcp: bool) -> AIService:
+    """根据预设配置创建 AIService 实例"""
+    return create_user_ai_service_with_mcp(
+        api_provider=preset_config['api_provider'],
+        api_key=preset_config['api_key'],
+        api_base_url=preset_config.get('api_base_url', ''),
+        model_name=preset_config['llm_model'],
+        temperature=preset_config.get('temperature', settings.temperature),
+        max_tokens=preset_config.get('max_tokens', settings.max_tokens),
+        user_id=user_id,
+        db_session=db,
+        system_prompt=settings.system_prompt,
+        enable_mcp=enable_mcp,
+    )
+
+
+def get_task_ai_service(task_type: str) -> Callable:
+    """
+    工厂函数：返回一个 FastAPI Depends 可调用对象，
+    按 task_type 从 task_channels 中解析预设，创建对应 AIService。
+    preset_id 为 null 时回退到默认配置（等同 get_user_ai_service）。
+    """
+    if task_type not in VALID_TASK_TYPES:
+        raise ValueError(f"无效的任务类型: {task_type}，可选: {VALID_TASK_TYPES}")
+
+    async def _resolve(
+        user: User = Depends(require_login),
+        db: AsyncSession = Depends(get_db)
+    ) -> AIService:
+        from app.models.mcp_plugin import MCPPlugin
+
+        settings = await get_user_settings(user.user_id, db)
+
+        # 查询 MCP 插件状态
+        mcp_result = await db.execute(
+            select(MCPPlugin).where(MCPPlugin.user_id == user.user_id)
+        )
+        mcp_plugins = mcp_result.scalars().all()
+        enable_mcp = any(p.enabled for p in mcp_plugins) if mcp_plugins else False
+
+        # 解析 task_channels
+        try:
+            prefs = json.loads(settings.preferences or '{}')
+        except json.JSONDecodeError:
+            prefs = {}
+
+        task_channels = prefs.get('task_channels', {})
+        channel = task_channels.get(task_type, {})
+        preset_id = channel.get('preset_id') if isinstance(channel, dict) else None
+
+        if preset_id:
+            # 从预设列表中查找
+            api_presets = prefs.get('api_presets', {}).get('presets', [])
+            target_preset = next((p for p in api_presets if p['id'] == preset_id), None)
+
+            if target_preset and 'config' in target_preset:
+                logger.info(f"任务渠道 [{task_type}] 使用预设: {target_preset.get('name', preset_id)}")
+                return _create_ai_service_from_preset(
+                    target_preset['config'], settings, user.user_id, db, enable_mcp
+                )
+            else:
+                # 预设不存在，清理失效引用并回退默认
+                logger.warning(f"任务渠道 [{task_type}] 预设 {preset_id} 不存在，回退默认配置")
+                task_channels[task_type] = {'preset_id': None}
+                prefs['task_channels'] = task_channels
+                settings.preferences = json.dumps(prefs, ensure_ascii=False)
+                await db.commit()
+
+        # 默认配置（等同 get_user_ai_service）
+        logger.debug(f"任务渠道 [{task_type}] 使用默认配置")
+        return create_user_ai_service_with_mcp(
+            api_provider=settings.api_provider,
+            api_key=settings.api_key,
+            api_base_url=settings.api_base_url or "",
+            model_name=settings.llm_model,
+            temperature=settings.temperature,
+            max_tokens=settings.max_tokens,
+            user_id=user.user_id,
+            db_session=db,
+            system_prompt=settings.system_prompt,
+            enable_mcp=enable_mcp,
+        )
+
+    return _resolve
+
+
+async def _resolve_task_ai_service_standalone(
+    user_id: str, task_type: str, db_session: AsyncSession
+) -> AIService:
+    """
+    供后台任务使用的独立版本（不依赖 Depends）。
+    从数据库加载用户设置和渠道配置，创建对应的 AIService。
+    """
+    from app.models.mcp_plugin import MCPPlugin
+
+    settings = await get_user_settings(user_id, db_session)
+
+    mcp_result = await db_session.execute(
+        select(MCPPlugin).where(MCPPlugin.user_id == user_id)
+    )
+    mcp_plugins = mcp_result.scalars().all()
+    enable_mcp = any(p.enabled for p in mcp_plugins) if mcp_plugins else False
+
+    try:
+        prefs = json.loads(settings.preferences or '{}')
+    except json.JSONDecodeError:
+        prefs = {}
+
+    task_channels = prefs.get('task_channels', {})
+    channel = task_channels.get(task_type, {})
+    preset_id = channel.get('preset_id') if isinstance(channel, dict) else None
+
+    if preset_id:
+        api_presets = prefs.get('api_presets', {}).get('presets', [])
+        target_preset = next((p for p in api_presets if p['id'] == preset_id), None)
+
+        if target_preset and 'config' in target_preset:
+            logger.info(f"[后台] 任务渠道 [{task_type}] 使用预设: {target_preset.get('name', preset_id)}")
+            return _create_ai_service_from_preset(
+                target_preset['config'], settings, user_id, db_session, enable_mcp
+            )
+        else:
+            logger.warning(f"[后台] 任务渠道 [{task_type}] 预设 {preset_id} 不存在，回退默认配置")
+
+    return create_user_ai_service_with_mcp(
+        api_provider=settings.api_provider,
+        api_key=settings.api_key,
+        api_base_url=settings.api_base_url or "",
+        model_name=settings.llm_model,
+        temperature=settings.temperature,
+        max_tokens=settings.max_tokens,
+        user_id=user_id,
+        db_session=db_session,
+        system_prompt=settings.system_prompt,
+        enable_mcp=enable_mcp,
+    )
 
 
 async def get_user_ai_service(
@@ -1081,14 +1231,25 @@ async def delete_preset(
     
     # 删除预设
     presets = [p for p in presets if p['id'] != preset_id]
-    
+
+    # 清理 task_channels 中对该预设的引用
+    task_channels = prefs.get('task_channels', {})
+    channels_cleaned = False
+    for t_type, t_channel in task_channels.items():
+        if isinstance(t_channel, dict) and t_channel.get('preset_id') == preset_id:
+            t_channel['preset_id'] = None
+            channels_cleaned = True
+    if channels_cleaned:
+        prefs['task_channels'] = task_channels
+        logger.info(f"用户 {user.user_id} 删除预设 {preset_id} 时清理了 task_channels 引用")
+
     # 保存回preferences
     api_presets['presets'] = presets
     prefs['api_presets'] = api_presets
     settings.preferences = json.dumps(prefs, ensure_ascii=False)
-    
+
     await db.commit()
-    
+
     logger.info(f"用户 {user.user_id} 删除预设: {preset_id}")
     return {"message": "预设已删除", "preset_id": preset_id}
 
@@ -1223,3 +1384,99 @@ async def create_preset_from_current(
     
     logger.info(f"用户 {user.user_id} 从当前配置创建预设: {name}")
     return await create_preset(create_request, user, db)
+
+
+# ========== 任务渠道 API ==========
+
+TASK_TYPE_LABELS = {
+    "outline": "大纲生成",
+    "writing": "正文写作",
+    "polish": "润色/去味",
+    "review": "章节审查",
+}
+
+
+@router.get("/task-channels")
+async def get_task_channels(
+    user: User = Depends(require_login),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    获取任务渠道配置 + 可用预设摘要列表
+    """
+    settings = await get_user_settings(user.user_id, db)
+
+    try:
+        prefs = json.loads(settings.preferences or '{}')
+    except json.JSONDecodeError:
+        prefs = {}
+
+    task_channels = prefs.get('task_channels', {})
+    api_presets = prefs.get('api_presets', {}).get('presets', [])
+
+    # 构建预设 ID 集合用于检测失效引用
+    preset_ids = {p['id'] for p in api_presets}
+
+    # 补全所有任务类型 + 标记失效预设
+    channels_out = {}
+    for t_type in VALID_TASK_TYPES:
+        ch = task_channels.get(t_type, {})
+        pid = ch.get('preset_id') if isinstance(ch, dict) else None
+        invalid = pid is not None and pid not in preset_ids
+        channels_out[t_type] = {"preset_id": pid, "_invalid": invalid}
+
+    # 可用预设摘要
+    available_presets = [
+        {
+            "id": p['id'],
+            "name": p.get('name', '未命名'),
+            "provider": p.get('config', {}).get('api_provider', ''),
+            "model": p.get('config', {}).get('llm_model', ''),
+        }
+        for p in api_presets
+    ]
+
+    return {
+        "channels": channels_out,
+        "available_presets": available_presets,
+    }
+
+
+@router.put("/task-channels")
+async def update_task_channels(
+    data: TaskChannelsUpdateRequest,
+    user: User = Depends(require_login),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    保存任务渠道配置，校验 preset_id 合法性
+    """
+    settings = await get_user_settings(user.user_id, db)
+
+    try:
+        prefs = json.loads(settings.preferences or '{}')
+    except json.JSONDecodeError:
+        prefs = {}
+
+    api_presets = prefs.get('api_presets', {}).get('presets', [])
+    preset_ids = {p['id'] for p in api_presets}
+
+    # 校验
+    new_channels = {}
+    for t_type, item in data.channels.items():
+        if t_type not in VALID_TASK_TYPES:
+            raise HTTPException(status_code=400, detail=f"无效任务类型: {t_type}")
+        if item.preset_id and item.preset_id not in preset_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=f"预设 {item.preset_id} 不存在（任务类型: {t_type}）"
+            )
+        new_channels[t_type] = {"preset_id": item.preset_id}
+
+    prefs['task_channels'] = new_channels
+    settings.preferences = json.dumps(prefs, ensure_ascii=False)
+
+    await db.commit()
+
+    logger.info(f"用户 {user.user_id} 更新任务渠道配置: {new_channels}")
+    return {"message": "任务渠道配置已保存", "channels": new_channels}

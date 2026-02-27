@@ -4,6 +4,7 @@ from typing import Dict, Any
 from datetime import datetime
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.exc import IllegalStateChangeError
 from sqlalchemy.orm import declarative_base
 from fastapi import Request, HTTPException
 from app.config import settings
@@ -163,6 +164,7 @@ async def get_db(request: Request):
     
     session = AsyncSessionLocal()
     session_id = id(session)
+    rollback_attempted = False
     
     global _session_stats
     _session_stats["created"] += 1
@@ -172,15 +174,19 @@ async def get_db(request: Request):
     
     try:
         yield session
-        if session.in_transaction():
+        if session.in_transaction() and not rollback_attempted:
+            rollback_attempted = True
             await session.rollback()
     except GeneratorExit:
         _session_stats["generator_exits"] += 1
         logger.warning(f"⚠️ GeneratorExit [User:{user_id}][ID:{session_id}] - SSE连接断开（总计:{_session_stats['generator_exits']}次）")
         try:
-            if session.in_transaction():
+            if session.in_transaction() and not rollback_attempted:
+                rollback_attempted = True
                 await session.rollback()
                 logger.info(f"✅ 事务已回滚 [User:{user_id}][ID:{session_id}]（GeneratorExit）")
+        except IllegalStateChangeError:
+            logger.debug(f"rollback already in progress [User:{user_id}][ID:{session_id}]")
         except Exception as rollback_error:
             _session_stats["errors"] += 1
             logger.error(f"❌ GeneratorExit回滚失败 [User:{user_id}][ID:{session_id}]: {str(rollback_error)}")
@@ -188,15 +194,19 @@ async def get_db(request: Request):
         _session_stats["errors"] += 1
         logger.error(f"❌ 会话异常 [User:{user_id}][ID:{session_id}]: {str(e)}")
         try:
-            if session.in_transaction():
+            if session.in_transaction() and not rollback_attempted:
+                rollback_attempted = True
                 await session.rollback()
                 logger.info(f"✅ 事务已回滚 [User:{user_id}][ID:{session_id}]（异常）")
+        except IllegalStateChangeError:
+            logger.debug(f"rollback already in progress [User:{user_id}][ID:{session_id}]")
         except Exception as rollback_error:
             logger.error(f"❌ 异常回滚失败 [User:{user_id}][ID:{session_id}]: {str(rollback_error)}")
         raise
     finally:
         try:
-            if session.in_transaction():
+            if session.in_transaction() and not rollback_attempted:
+                rollback_attempted = True
                 await session.rollback()
                 logger.warning(f"⚠️ finally中发现未提交事务 [User:{user_id}][ID:{session_id}]，已回滚")
             

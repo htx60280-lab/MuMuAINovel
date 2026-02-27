@@ -153,7 +153,13 @@ class PlotAnalysis(Base):
     pacing_score = Column(Float, comment="节奏评分 0.0-10.0")
     engagement_score = Column(Float, comment="吸引力评分 0.0-10.0")
     coherence_score = Column(Float, comment="连贯性评分 0.0-10.0")
-    
+
+    # CriticAgent 质量评分（0-100 分制）
+    ooc_score = Column(Float, comment="角色一致性评分 0-100")
+    consistency_score = Column(Float, comment="设定一致性评分 0-100")
+    three_line_rhythm_score = Column(Float, comment="三线节奏评分 0-100")
+    critic_details = Column(JSON, comment="CriticAgent 详细审查结果")
+
     # 文本分析报告
     analysis_report = Column(Text, comment="完整的文字分析报告")
     suggestions = Column(JSON, comment="改进建议列表: ['建议1', '建议2']")
@@ -192,6 +198,10 @@ class PlotAnalysis(Base):
             "pacing_score": self.pacing_score or 0.0,
             "engagement_score": self.engagement_score or 0.0,
             "coherence_score": self.coherence_score or 0.0,
+            "ooc_score": self.ooc_score or 0.0,
+            "consistency_score": self.consistency_score or 0.0,
+            "three_line_rhythm_score": self.three_line_rhythm_score or 0.0,
+            "critic_details": self.critic_details or {},
             "analysis_report": self.analysis_report,
             "suggestions": self.suggestions or [],
             "dialogue_ratio": self.dialogue_ratio or 0.0,

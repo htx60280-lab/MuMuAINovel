@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
+﻿import { useState, useEffect } from 'react';
 import { Card, Form, Input, Button, Select, Slider, InputNumber, message, Space, Typography, Spin, Modal, Alert, Grid, Tabs, List, Tag, Popconfirm, Empty, Row, Col } from 'antd';
-import { SaveOutlined, DeleteOutlined, ReloadOutlined, InfoCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, ThunderboltOutlined, PlusOutlined, EditOutlined, CopyOutlined, WarningOutlined } from '@ant-design/icons';
+import { SaveOutlined, DeleteOutlined, ReloadOutlined, InfoCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, ThunderboltOutlined, PlusOutlined, EditOutlined, CopyOutlined, WarningOutlined, SwapOutlined } from '@ant-design/icons';
 import { settingsApi, mcpPluginApi } from '../services/api';
-import type { SettingsUpdate, APIKeyPreset, PresetCreateRequest, APIKeyPresetConfig } from '../types';
+import type { SettingsUpdate, APIKeyPreset, PresetCreateRequest, APIKeyPresetConfig, TaskType, TaskChannelItem } from '../types';
 import { eventBus, EventNames } from '../store/eventBus';
 
 const { Title, Text } = Typography;
@@ -68,6 +68,17 @@ export default function SettingsPage() {
     suggestions?: string[];
   } | null>(null);
 
+  // 任务渠道相关状态
+  const [taskChannels, setTaskChannels] = useState<Record<TaskType, TaskChannelItem>>({
+    outline: { preset_id: null },
+    writing: { preset_id: null },
+    polish: { preset_id: null },
+    review: { preset_id: null },
+  });
+  const [availablePresets, setAvailablePresets] = useState<Array<{ id: string; name: string; provider: string; model: string }>>([]);
+  const [taskChannelsLoading, setTaskChannelsLoading] = useState(false);
+  const [taskChannelsSaving, setTaskChannelsSaving] = useState(false);
+
   useEffect(() => {
     loadSettings();
     if (activeTab === 'presets') {
@@ -85,6 +96,8 @@ export default function SettingsPage() {
       // 清除旧的测试结果，因为可能是其他配置的测试结果
       setTestResult(null);
       setShowTestResult(false);
+    } else if (activeTab === 'channels') {
+      loadTaskChannels();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
@@ -536,6 +549,157 @@ export default function SettingsPage() {
     }
   };
 
+  // 任务渠道相关函数
+  const loadTaskChannels = async () => {
+    setTaskChannelsLoading(true);
+    try {
+      const response = await settingsApi.getTaskChannels();
+      setTaskChannels(response.channels);
+      setAvailablePresets(response.available_presets);
+    } catch (error) {
+      message.error('加载任务渠道配置失败');
+      console.error(error);
+    } finally {
+      setTaskChannelsLoading(false);
+    }
+  };
+
+  const handleTaskChannelChange = (taskType: TaskType, presetId: string | null) => {
+    setTaskChannels(prev => ({
+      ...prev,
+      [taskType]: { preset_id: presetId, _invalid: false },
+    }));
+  };
+
+  const saveTaskChannels = async () => {
+    setTaskChannelsSaving(true);
+    try {
+      const payload: Record<string, TaskChannelItem> = {};
+      for (const [key, val] of Object.entries(taskChannels)) {
+        payload[key] = { preset_id: val.preset_id };
+      }
+      await settingsApi.updateTaskChannels(payload);
+      message.success('任务渠道配置已保存');
+      loadTaskChannels();
+    } catch (error) {
+      message.error('保存任务渠道配置失败');
+      console.error(error);
+    } finally {
+      setTaskChannelsSaving(false);
+    }
+  };
+
+  const TASK_TYPE_CONFIG: Record<TaskType, { label: string; description: string; color: string }> = {
+    outline: { label: '大纲生成', description: '生成和扩展小说大纲', color: '#1890ff' },
+    writing: { label: '正文写作', description: '创作章节正文内容', color: '#52c41a' },
+    polish: { label: '润色/去味', description: '重写和润色章节内容', color: '#faad14' },
+    review: { label: '章节审查', description: '五维审查与批评分析', color: '#722ed1' },
+  };
+
+  const renderTaskChannels = () => (
+    <Spin spinning={taskChannelsLoading}>
+      <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+        {availablePresets.length === 0 && !taskChannelsLoading && (
+          <Alert
+            message="暂无可用预设"
+            description={
+              <span>
+                请先在「配置预设」Tab 中创建 API 配置预设，然后回到此处分配渠道。
+                <Button type="link" size="small" onClick={() => setActiveTab('presets')} style={{ padding: 0, marginLeft: 4 }}>
+                  前往创建预设
+                </Button>
+              </span>
+            }
+            type="info"
+            showIcon
+          />
+        )}
+
+        <Alert
+          message="任务渠道说明"
+          description="为不同任务类型指定不同的 API 配置预设。选择「使用默认配置」将使用当前配置 Tab 中的设置。"
+          type="info"
+          showIcon
+          style={{ marginBottom: 8 }}
+        />
+
+        <Row gutter={[16, 16]}>
+          {(Object.keys(TASK_TYPE_CONFIG) as TaskType[]).map(taskType => {
+            const config = TASK_TYPE_CONFIG[taskType];
+            const channel = taskChannels[taskType];
+            const isInvalid = channel?._invalid;
+
+            return (
+              <Col xs={24} sm={12} key={taskType}>
+                <Card
+                  size="small"
+                  title={
+                    <Space>
+                      <SwapOutlined style={{ color: config.color }} />
+                      <span>{config.label}</span>
+                    </Space>
+                  }
+                  style={{
+                    borderLeft: `3px solid ${config.color}`,
+                    height: '100%',
+                  }}
+                >
+                  <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 12 }}>
+                    {config.description}
+                  </Text>
+
+                  {isInvalid && (
+                    <Alert
+                      message="当前关联的预设已被删除，将使用默认配置"
+                      type="warning"
+                      showIcon
+                      style={{ marginBottom: 8 }}
+                      icon={<WarningOutlined />}
+                    />
+                  )}
+
+                  <Select
+                    style={{ width: '100%' }}
+                    value={channel?.preset_id ?? '__default__'}
+                    onChange={(val: string) => handleTaskChannelChange(taskType, val === '__default__' ? null : val)}
+                    status={isInvalid ? 'warning' : undefined}
+                  >
+                    <Option value="__default__">
+                      <Space>
+                        <Tag color="default">默认</Tag>
+                        使用默认配置
+                      </Space>
+                    </Option>
+                    {availablePresets.map(preset => (
+                      <Option key={preset.id} value={preset.id}>
+                        <Space>
+                          <Tag color="blue">{preset.provider}</Tag>
+                          {preset.name}
+                          <Text type="secondary" style={{ fontSize: 11 }}>({preset.model})</Text>
+                        </Space>
+                      </Option>
+                    ))}
+                  </Select>
+                </Card>
+              </Col>
+            );
+          })}
+        </Row>
+
+        <div style={{ textAlign: 'right', marginTop: 8 }}>
+          <Button
+            type="primary"
+            icon={<SaveOutlined />}
+            loading={taskChannelsSaving}
+            onClick={saveTaskChannels}
+          >
+            保存渠道配置
+          </Button>
+        </div>
+      </Space>
+    </Spin>
+  );
+
   const showPresetModal = (preset?: APIKeyPreset) => {
     // 重置预设模型列表状态
     setPresetModelOptions([]);
@@ -626,6 +790,7 @@ export default function SettingsPage() {
     // 清空模型列表，需要重新获取
     setPresetModelOptions([]);
     setPresetModelsFetched(false);
+    setPresetModelSearchText('');
   };
 
   const handlePresetSave = async () => {
@@ -1826,6 +1991,11 @@ export default function SettingsPage() {
                   key: 'presets',
                   label: '配置预设',
                   children: renderPresetsList(),
+                },
+                {
+                  key: 'channels',
+                  label: '任务渠道',
+                  children: renderTaskChannels(),
                 },
               ]}
             />

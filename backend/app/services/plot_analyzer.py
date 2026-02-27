@@ -93,26 +93,16 @@ class PlotAnalyzer:
         logger.debug(f"章节分析提示词{prompt}")
         for attempt in range(1, max_retries + 1):
             try:
-                # 调用AI进行分析
+                # 调用AI进行分析（使用非流式接口，避免流式chunk解码破坏内层JSON转义）
                 logger.info(f"  📡 调用AI分析(内容长度: {len(analysis_content)}字, 尝试 {attempt}/{max_retries})...")
-                accumulated_text = ""
-                
-                try:
-                    async for chunk in self.ai_service.generate_text_stream(
-                        prompt=prompt,
-                        temperature=0.3  # 降低温度以获得更稳定的JSON输出
-                    ):
-                        accumulated_text += chunk
-                except GeneratorExit:
-                    # 流式响应被中断
-                    logger.warning(f"⚠️ 流式响应被中断(GeneratorExit)，已累积 {len(accumulated_text)} 字符")
-                    # 如果已经累积了足够内容，继续尝试解析
-                    if len(accumulated_text) < 100:
-                        raise Exception("流式响应中断，内容不足")
-                except Exception as stream_error:
-                    logger.error(f"❌ 流式生成出错: {str(stream_error)}")
-                    raise
-                
+
+                response = await self.ai_service.generate_text(
+                    prompt=prompt,
+                    temperature=0.3,  # 降低温度以获得更稳定的JSON输出
+                    auto_mcp=False    # 分析不需要MCP工具
+                )
+                accumulated_text = response.get("content", "")
+
                 # 检查响应是否为空
                 if not accumulated_text or len(accumulated_text.strip()) < 10:
                     logger.warning(f"⚠️ AI响应为空或过短(长度: {len(accumulated_text)}), 尝试 {attempt}/{max_retries}")

@@ -17,13 +17,15 @@ RUN if [ "$USE_CN_MIRROR" = "true" ]; then \
     fi
 
 # 复制前端源代码（.dockerignore 会排除 node_modules）
+COPY frontend/package.json frontend/package-lock.json ./
+
+RUN npm ci
+
 COPY frontend/ ./
 
 # 删除可能存在的 lock 文件和 node_modules，确保干净安装
-RUN rm -rf node_modules package-lock.json
 
 # 安装依赖（全新安装，确保 esbuild 正确编译）
-RUN npm install
 
 # 临时修改vite配置，使其输出到dist目录（而不是../backend/static）
 RUN sed -i "s|outDir: '../backend/static'|outDir: 'dist'|g" vite.config.ts

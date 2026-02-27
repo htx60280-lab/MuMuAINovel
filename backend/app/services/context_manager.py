@@ -2,6 +2,7 @@
 
 负责在章节生成前构建增强上下文，包括：
 1. pgvector 向量检索相关记忆片段
+1.5. 精确实体检索（补充向量检索不足）
 2. 实体识别预检索（精确匹配）
 3. 加载世界观设定
 4. 分层摘要（最近3章详细摘要 + 关键事件时间轴）
@@ -10,6 +11,7 @@
 7. 构建强制遵守历史设定的 System Prompt
 """
 import json
+import re
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +26,8 @@ from app.models.foreshadow import Foreshadow
 from app.models.key_event import KeyEvent
 from app.logger import get_logger
 from app.config import settings, EMBEDDING_DIMENSIONS
+from app.services.qdrant_service import QdrantService
+from qdrant_client.http import models as qdrant_models
 
 logger = get_logger(__name__)
 
@@ -53,6 +57,8 @@ class ContextAgent:
         if embedding_model is not None and self._embedding_client is None:
             logger.warning("⚠️ embedding_model 参数已弃用，仅支持 AsyncOpenAI 客户端")
         self.use_pgvector = use_pgvector
+        self._qdrant_service: Optional[QdrantService] = None
+        self._vector_search_error: Optional[str] = None
 
     @property
     def embedding_client(self) -> Optional[AsyncOpenAI]:
@@ -72,6 +78,12 @@ class ContextAgent:
                 logger.warning(f"⚠️ Embedding 客户端初始化失败: {e}")
                 return None
         return self._embedding_client
+
+    @property
+    def qdrant_service(self) -> QdrantService:
+        if self._qdrant_service is None:
+            self._qdrant_service = QdrantService()
+        return self._qdrant_service
 
     async def _get_query_embedding(self, text: str) -> Optional[List[float]]:
         """使用 Embedding API 生成查询向量，失败时安全降级"""
@@ -143,7 +155,45 @@ class ContextAgent:
                 top_k=top_k,
                 chapter_number=chapter_number
             )
+            if self._vector_search_error:
+                result.metadata["vector_search_error"] = self._vector_search_error
             result.metadata["retrieved_chunks"] = len(relevant_chunks)
+
+            # 1.5 精确实体检索（补充向量检索的不足）
+            precise_chunks: List[Dict[str, Any]] = []
+            if settings.enable_precise_search and chapter_outline and len(chapter_outline) > 20:
+                try:
+                    # 向量检索失败时，使用纯规则关键词提取降级
+                    if self._vector_search_error and not relevant_chunks:
+                        logger.warning("⚠️ 向量检索失败，使用精确实体检索降级")
+                        fallback_entities = self._extract_keywords_simple(chapter_outline)
+                        relevant_chunks = await self.precise_entity_search(
+                            project_id=project_id,
+                            entities=fallback_entities,
+                            limit=8
+                        )
+                        result.metadata["retrieved_chunks"] = len(relevant_chunks)
+                        result.metadata["precise_fallback"] = True
+                    else:
+                        # 正常流程：从大纲提取关键词做精确补充
+                        entities = self._extract_keywords_simple(chapter_outline)
+                        if entities:
+                            precise_chunks = await self.precise_entity_search(
+                                project_id=project_id,
+                                entities=entities,
+                                limit=5
+                            )
+                            # 与向量检索结果去重
+                            existing_contents = {c.get("content", "")[:100] for c in relevant_chunks}
+                            precise_chunks = [
+                                c for c in precise_chunks
+                                if c["content"][:100] not in existing_contents
+                            ]
+                            result.metadata["precise_chunks"] = len(precise_chunks)
+                            if precise_chunks:
+                                logger.info(f"🎯 精确检索完成: {len(precise_chunks)} 条匹配")
+                except Exception as e:
+                    logger.warning(f"⚠️ 精确实体检索失败（不影响生成）: {e}")
 
             # 2. 加载世界观设定
             worldbuilding = await self._load_worldbuilding(project_id)
@@ -180,7 +230,8 @@ class ContextAgent:
                 foreshadow_context=foreshadow_context,
                 character_names=character_names,
                 previous_hook=previous_hook,
-                key_events_timeline=key_events_timeline
+                key_events_timeline=key_events_timeline,
+                precise_chunks=precise_chunks
             )
 
             # 7. 构建 System Prompt
@@ -220,8 +271,24 @@ class ContextAgent:
         Returns:
             相关记忆片段列表
         """
+        self._vector_search_error = None
+
         if not self.use_pgvector:
             logger.warning("⚠️ pgvector 未启用，跳过向量检索")
+            return []
+
+        if settings.vector_db_provider == "qdrant":
+            return await self._search_qdrant(
+                project_id=project_id,
+                query_text=query_text,
+                top_k=top_k,
+                chapter_number=chapter_number
+            )
+
+        if settings.vector_db_provider != "pgvector":
+            message = f"未知向量数据库类型: {settings.vector_db_provider}"
+            logger.warning(f"⚠️ {message}，跳过向量检索")
+            self._vector_search_error = message
             return []
 
         try:
@@ -232,10 +299,11 @@ class ContextAgent:
                 return []
 
             # 构建 SQL 查询（使用余弦相似度）
-            # 只检索当前章节之前的内容
+            # 使用 CAST(:query_embedding AS vector) 避免 :param::vector 在 asyncpg 下语法错误
+            # chapter_number 使用绑定参数，避免字符串拼接
             chapter_filter = ""
             if chapter_number and chapter_number > 1:
-                chapter_filter = f"AND story_timeline < {chapter_number}"
+                chapter_filter = "AND story_timeline < :chapter_number"
 
             sql = text(f"""
                 SELECT
@@ -245,23 +313,29 @@ class ContextAgent:
                     characters_mentioned,
                     story_timeline,
                     importance_score,
-                    1 - (embedding <=> :query_embedding::vector) as similarity
+                    1 - (embedding <=> CAST(:query_embedding AS vector)) as similarity
                 FROM chapter_memories
                 WHERE project_id = :project_id
                     AND embedding IS NOT NULL
                     {chapter_filter}
-                ORDER BY embedding <=> :query_embedding::vector
+                ORDER BY embedding <=> CAST(:query_embedding AS vector)
                 LIMIT :top_k
             """)
 
-            result = await self.db.execute(
-                sql,
-                {
-                    "project_id": project_id,
-                    "query_embedding": str(query_embedding),
-                    "top_k": top_k
-                }
-            )
+            # pgvector 输入格式要求为 [v1,v2,...]
+            query_embedding_literal = "[" + ",".join(str(v) for v in query_embedding) + "]"
+
+            # 在保存点中执行向量检索，防止 SQL 失败污染外层事务
+            params = {
+                "project_id": project_id,
+                "query_embedding": query_embedding_literal,
+                "top_k": top_k
+            }
+            if chapter_number and chapter_number > 1:
+                params["chapter_number"] = int(chapter_number)
+
+            async with self.db.begin_nested():
+                result = await self.db.execute(sql, params)
 
             chunks = []
             for row in result.fetchall():
@@ -280,6 +354,71 @@ class ContextAgent:
 
         except Exception as e:
             logger.error(f"❌ pgvector 检索失败: {e}", exc_info=True)
+            self._vector_search_error = str(e)
+            return []
+
+    async def _search_qdrant(
+        self,
+        project_id: str,
+        query_text: str,
+        top_k: int = 5,
+        chapter_number: int = None
+    ) -> List[Dict[str, Any]]:
+        if not self.use_pgvector:
+            return []
+
+        try:
+            if not self.qdrant_service.collection_exists("chapter_memories"):
+                message = "Qdrant 集合不存在"
+                logger.warning(f"⚠️ {message}，跳过向量检索")
+                self._vector_search_error = message
+                return []
+
+            query_embedding = await self._get_query_embedding(query_text)
+            if not query_embedding:
+                logger.warning("⚠️ 向量生成失败或未配置 Embedding，跳过向量检索")
+                return []
+
+            filters: List[qdrant_models.Condition] = [
+                qdrant_models.FieldCondition(
+                    key="project_id",
+                    match=qdrant_models.MatchValue(value=project_id)
+                )
+            ]
+
+            if chapter_number and chapter_number > 1:
+                filters.append(
+                    qdrant_models.FieldCondition(
+                        key="story_timeline",
+                        range=qdrant_models.Range(lt=chapter_number)
+                    )
+                )
+
+            qdrant_filter = qdrant_models.Filter(must=filters)
+            results = self.qdrant_service.search(
+                collection="chapter_memories",
+                query_vector=query_embedding,
+                limit=top_k,
+                filter_payload=qdrant_filter
+            )
+
+            chunks = []
+            for hit in results:
+                payload = hit.payload
+                chunks.append({
+                    "id": hit.memory_id,
+                    "content": payload.get("content", ""),
+                    "memory_type": payload.get("memory_type", "narrative"),
+                    "characters": payload.get("characters", []) or [],
+                    "chapter": payload.get("story_timeline"),
+                    "importance": payload.get("importance", 0.5) or 0.5,
+                    "similarity": float(hit.score),
+                })
+
+            return chunks
+        except Exception as e:
+            logger.error(f"❌ Qdrant 检索失败: {e}", exc_info=True)
+            self._vector_search_error = str(e)
             return []
 
     async def _load_worldbuilding(self, project_id: str) -> Dict[str, Any]:
@@ -458,6 +597,27 @@ class ContextAgent:
             logger.warning(f"⚠️ 精确检索失败: {e}")
             return []
 
+    @staticmethod
+    def _extract_keywords_simple(text: str) -> List[str]:
+        """
+        纯规则的关键词提取（不调用 AI）。
+        按中文标点和空格分割，取长度 ≥ 2 的片段作为检索关键词。
+        """
+        if not text:
+            return []
+        # 用常见标点和空格分割
+        _SPLIT_PAT = re.compile(r"[，。！？、；：\u201c\u201d\u2018\u2019「」【】（）\s,.\n\r\t]+")
+        segments = _SPLIT_PAT.split(text)
+        # 过滤：长度 2-10 的片段，去重
+        seen = set()
+        keywords = []
+        for seg in segments:
+            seg = seg.strip()
+            if 2 <= len(seg) <= 10 and seg not in seen:
+                seen.add(seg)
+                keywords.append(seg)
+        return keywords[:15]  # 限制数量
+
     async def _load_previous_hook(
         self,
         project_id: str,
@@ -596,7 +756,8 @@ class ContextAgent:
         foreshadow_context: List[Dict[str, Any]],
         character_names: Optional[List[str]] = None,
         previous_hook: Optional[Dict[str, Any]] = None,
-        key_events_timeline: Optional[List[Dict[str, Any]]] = None
+        key_events_timeline: Optional[List[Dict[str, Any]]] = None,
+        precise_chunks: Optional[List[Dict[str, Any]]] = None
     ) -> str:
         """格式化上下文字符串"""
         parts = []
@@ -661,6 +822,16 @@ class ContextAgent:
                     f"[片段{i}] (第{chunk['chapter']}章, 相似度:{chunk['similarity']:.2f})\n{chunk['content'][:200]}..."
                 )
             parts.append("【相关历史片段】\n" + "\n\n".join(chunk_lines))
+
+        # 精确匹配记忆（实体相关）
+        if precise_chunks:
+            precise_lines = []
+            for chunk in precise_chunks:
+                precise_lines.append(
+                    f"[第{chunk.get('chapter_number', '?')}章·{chunk.get('entity_matched', '?')}] "
+                    f"{chunk['content'][:200]}"
+                )
+            parts.append("【🎯 精确匹配记忆（实体相关）】\n" + "\n".join(precise_lines))
 
         # 活跃伏笔
         if foreshadow_context:

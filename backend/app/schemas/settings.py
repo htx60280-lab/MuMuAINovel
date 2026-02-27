@@ -1,4 +1,4 @@
-"""设置相关的Pydantic模型"""
+﻿"""设置相关的Pydantic模型"""
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List
 from datetime import datetime

@@ -383,6 +383,12 @@ export function useChapterSync() {
               } else if (message.type === 'analysis_queued') {
                 // 分析任务已加入队列
                 analysisTaskId = message.task_id;
+              } else if (message.type === 'warning') {
+                // 非致命警告（如记忆存储失败），显示在进度中
+                if (onProgressUpdate) {
+                  onProgressUpdate(message.message || '警告', message.progress || 95);
+                }
+                console.warn('SSE warning:', message.message);
               }
             }
           } catch (error) {

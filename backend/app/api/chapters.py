@@ -58,8 +58,9 @@ from app.services.chapter_regenerator import ChapterRegenerator
 from app.services.chapter_memory_service import ChapterMemoryService
 from app.services.critic_agent import CriticAgent
 from app.services.context_manager import ContextAgent
+from app.services.chapter_guardrails import ChapterGuardrails, GuardrailResult
 from app.logger import get_logger
-from app.api.settings import get_user_ai_service
+from app.api.settings import get_user_ai_service, get_task_ai_service, _resolve_task_ai_service_standalone
 from app.utils.sse_response import SSEResponse, create_sse_response
 from app.config import settings
 
@@ -317,6 +318,236 @@ async def _run_data_agent_pipeline(
         }
 
 
+# ==================== 反幻觉/反遗忘辅助函数 ====================
+
+
+def _extract_names_from_text(text: str, all_names: List[str]) -> set:
+    """从文本中提取出现过的角色名（纯字符串匹配，不调用 AI）。"""
+    if not text or not all_names:
+        return set()
+    return {name for name in all_names if name and len(name) >= 2 and name in text}
+
+
+async def _build_character_lists(
+    db_session: AsyncSession,
+    project: Project,
+    chapter_outline: str,
+    chapter_number: int,
+) -> Dict[str, List[str]]:
+    """
+    构建禁止角色名单和新角色名单。
+
+    Returns:
+        {
+            "all_names": [...],
+            "forbidden": [...],
+            "new_characters": [...],
+            "introduced": [...],
+        }
+    """
+    # 项目全部角色
+    chars_result = await db_session.execute(
+        select(Character.name).where(
+            Character.project_id == project.id,
+            Character.is_organization == False,
+        )
+    )
+    all_character_names = [row[0] for row in chars_result.all() if row[0]]
+
+    if not all_character_names:
+        return {"all_names": [], "forbidden": [], "new_characters": [], "introduced": []}
+
+    # 大纲中提到的角色
+    outline_text = chapter_outline or ""
+    outline_mentioned = _extract_names_from_text(outline_text, all_character_names)
+
+    # 已登场角色（从最近 N 章摘要中提取）
+    recent_rows = await db_session.execute(
+        select(Chapter.summary)
+        .where(
+            Chapter.project_id == project.id,
+            Chapter.chapter_number < chapter_number,
+            Chapter.summary.isnot(None),
+        )
+        .order_by(desc(Chapter.chapter_number))
+        .limit(10)
+    )
+    recent_summaries_text = " ".join([r[0] for r in recent_rows.all() if r[0]])
+    introduced = _extract_names_from_text(recent_summaries_text, all_character_names)
+
+    # 第一章时，大纲提及的角色视为允许
+    allowed = introduced | outline_mentioned
+    forbidden = [n for n in all_character_names if n not in allowed]
+    new_characters = [n for n in outline_mentioned if n not in introduced]
+
+    return {
+        "all_names": all_character_names,
+        "forbidden": forbidden,
+        "new_characters": new_characters,
+        "introduced": list(introduced),
+    }
+
+
+async def _generate_director_plan(
+    ai_service: AIService,
+    previous_summary: str,
+    chapter_outline: str,
+    introduced_characters: str,
+    new_characters: str,
+    narrative_perspective: str,
+    user_id: str = None,
+    db_session: AsyncSession = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    调用 AI 生成导演预规划脚本。
+
+    Returns:
+        解析后的 JSON dict，或 None。
+    """
+    template = await PromptService.get_template("CHAPTER_DIRECTOR_PLAN", user_id, db_session) \
+        if user_id and db_session else PromptService.CHAPTER_DIRECTOR_PLAN
+
+    if not template:
+        return None
+
+    prompt = PromptService.format_prompt(
+        template,
+        previous_summary=previous_summary or "无",
+        chapter_outline=chapter_outline or "无",
+        introduced_characters=introduced_characters or "无",
+        new_characters=new_characters or "无",
+        narrative_perspective=narrative_perspective or "第三人称",
+    )
+
+    import json as _json
+
+    max_attempts = 2
+    token_limits = [2048, 4096]  # 第一次 2048，重试时加大
+
+    for attempt in range(max_attempts):
+        response = await ai_service.generate_text(
+            prompt=prompt,
+            system_prompt="你是一个章节导演，请严格按照 JSON 格式输出，不要输出多余内容。",
+            max_tokens=token_limits[min(attempt, len(token_limits) - 1)],
+        )
+        response_text = response.get("content", "") if isinstance(response, dict) else str(response)
+
+        # 检测截断（finish_reason=length 或 JSON 不完整）
+        finish_reason = ""
+        if isinstance(response, dict):
+            finish_reason = response.get("finish_reason", "")
+
+        try:
+            if "{" in response_text and "}" in response_text:
+                start = response_text.index("{")
+                end = response_text.rindex("}") + 1
+                plan = _json.loads(response_text[start:end])
+                if isinstance(plan, dict):
+                    logger.info(f"📋 导演预规划完成: pov={plan.get('pov', '?')}")
+                    return plan
+        except (_json.JSONDecodeError, ValueError):
+            pass
+
+        # JSON 解析失败，判断是否因为截断
+        if finish_reason == "length" or ("{" in response_text and "}" not in response_text):
+            logger.warning(
+                f"⚠️ 导演预规划输出被截断 (attempt={attempt + 1}/{max_attempts}, "
+                f"max_tokens={token_limits[min(attempt, len(token_limits) - 1)]}), 重试..."
+            )
+            continue
+
+        break
+
+    logger.warning("⚠️ 导演预规划 JSON 解析失败")
+    return None
+
+
+def _format_director_plan_block(director_plan: Dict[str, Any]) -> str:
+    """将导演预规划结果格式化为可注入 system prompt 的文本块。"""
+    forbidden_actions = director_plan.get("forbidden_actions", [])
+    must_mention = director_plan.get("must_mention", [])
+    return (
+        f"\n【📋 章节导演脚本（必须遵守）】\n"
+        f"- 主视角：{director_plan.get('pov', '未指定')}\n"
+        f"- 开场切入：{director_plan.get('opening_beat', '未指定')}\n"
+        f"- 核心事件：{director_plan.get('core_event', '未指定')}\n"
+        f"- 情绪走向：{director_plan.get('emotion_arc', '未指定')}\n"
+        f"- 禁止行为：{', '.join(forbidden_actions) if forbidden_actions else '无'}\n"
+        f"- 必须提及：{', '.join(must_mention) if must_mention else '无'}\n"
+    )
+
+
+async def _apply_guardrails_check(
+    ai_service: AIService,
+    content: str,
+    forbidden_names: List[str],
+    new_characters: List[str],
+    narrative_perspective: str,
+    system_prompt: Optional[str],
+    max_tokens: int,
+    model: Optional[str] = None,
+) -> str:
+    """
+    执行规则护栏检查，如有违规且开启自动重写则调用 AI 修复。
+
+    Returns:
+        修复后的内容（如无违规则返回原内容）。
+    """
+    if not settings.enable_guardrails:
+        return content
+
+    guardrails = ChapterGuardrails()
+    result = guardrails.check(
+        text=content,
+        forbidden_characters=forbidden_names,
+        new_characters=new_characters,
+        narrative_perspective=narrative_perspective,
+    )
+
+    if result.passed:
+        return content
+
+    logger.warning(f"⚠️ 规则护栏检测到 {len(result.violations)} 个违规: {result.summary}")
+
+    if not settings.guardrails_auto_rewrite:
+        return content
+
+    violations_text = guardrails.format_violations_for_rewrite(result)
+    rewrite_prompt = f"""请修复以下违规问题，保持其余内容不变：
+
+{violations_text}
+
+【当前章节内容】
+{content}
+
+【修复要求】
+1. 移除或替换禁止出现的角色名
+2. 消除全知视角的表述，改为限知视角
+3. 为新角色添加合理的介绍性描写
+4. 保持核心情节和字数不变
+直接输出修复后的完整章节正文。"""
+
+    try:
+        rewrite_response = await ai_service.generate_text(
+            prompt=rewrite_prompt,
+            system_prompt=system_prompt,
+            max_tokens=max_tokens,
+            model=model,
+        )
+        rewritten = (
+            rewrite_response.get("content", "")
+            if isinstance(rewrite_response, dict)
+            else str(rewrite_response)
+        ).strip()
+        if rewritten:
+            logger.info("✅ 规则护栏违规已自动修复")
+            return rewritten
+    except Exception as e:
+        logger.warning(f"⚠️ 规则护栏重写失败（保留原内容）: {e}")
+
+    return content
+
+
 @router.post("", response_model=ChapterResponse, summary="创建章节")
 async def create_chapter(
     chapter: ChapterCreate,
@@ -504,7 +735,9 @@ async def update_chapter(
     chapter_id: str,
     chapter_update: ChapterUpdate,
     request: Request,
-    db: AsyncSession = Depends(get_db)
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    user_ai_service: AIService = Depends(get_user_ai_service)
 ):
     """更新章节信息"""
     result = await db.execute(
@@ -541,58 +774,99 @@ async def update_chapter(
             project.current_words = project.current_words - old_word_count + new_word_count
         
         # 如果内容被清空，清理相关数据
-            if not chapter.content or chapter.content.strip() == "":
-                chapter.status = "draft"
-                
-                # 清理分析任务
-                analysis_tasks_result = await db.execute(
-                    select(AnalysisTask).where(AnalysisTask.chapter_id == chapter_id)
+        if not chapter.content or chapter.content.strip() == "":
+            chapter.status = "draft"
+
+            # 清理分析任务
+            analysis_tasks_result = await db.execute(
+                select(AnalysisTask).where(AnalysisTask.chapter_id == chapter_id)
+            )
+            analysis_tasks = analysis_tasks_result.scalars().all()
+            for task in analysis_tasks:
+                await db.delete(task)
+
+            # 清理分析结果
+            plot_analysis_result = await db.execute(
+                select(PlotAnalysis).where(PlotAnalysis.chapter_id == chapter_id)
+            )
+            plot_analyses = plot_analysis_result.scalars().all()
+            for analysis in plot_analyses:
+                await db.delete(analysis)
+
+            # 清理故事记忆（关系数据库）
+            story_memories_result = await db.execute(
+                select(StoryMemory).where(StoryMemory.chapter_id == chapter_id)
+            )
+            story_memories = story_memories_result.scalars().all()
+            for memory in story_memories:
+                await db.delete(memory)
+
+            # 清理向量数据库中的记忆数据
+            try:
+                await memory_service.delete_chapter_memories(
+                    user_id=user_id,
+                    project_id=chapter.project_id,
+                    chapter_id=chapter_id
                 )
-                analysis_tasks = analysis_tasks_result.scalars().all()
-                for task in analysis_tasks:
-                    await db.delete(task)
-                
-                # 清理分析结果
-                plot_analysis_result = await db.execute(
-                    select(PlotAnalysis).where(PlotAnalysis.chapter_id == chapter_id)
+                logger.info(f"✅ 已清理章节 {chapter_id[:8]} 的向量记忆数据")
+            except Exception as e:
+                logger.warning(f"⚠️ 清理向量记忆数据失败: {str(e)}")
+
+            # 🔮 清理章节相关的分析伏笔数据
+            try:
+                foreshadow_result = await foreshadow_service.delete_chapter_foreshadows(
+                    db=db,
+                    project_id=chapter.project_id,
+                    chapter_id=chapter_id,
+                    only_analysis_source=True  # 只删除分析来源的伏笔，保留手动创建的
                 )
-                plot_analyses = plot_analysis_result.scalars().all()
-                for analysis in plot_analyses:
-                    await db.delete(analysis)
-                
-                # 清理故事记忆（关系数据库）
-                story_memories_result = await db.execute(
-                    select(StoryMemory).where(StoryMemory.chapter_id == chapter_id)
-                )
-                story_memories = story_memories_result.scalars().all()
-                for memory in story_memories:
-                    await db.delete(memory)
-                
-                # 清理向量数据库中的记忆数据
+                if foreshadow_result['deleted_count'] > 0:
+                    logger.info(f"🔮 已清理章节 {chapter_id[:8]} 的 {foreshadow_result['deleted_count']} 个伏笔数据")
+            except Exception as e:
+                logger.warning(f"⚠️ 清理伏笔数据失败: {str(e)}")
+
+            logger.info(f"🗑️ 章节 {chapter_id[:8]} 内容已清空，已清理分析、记忆和伏笔数据")
+        else:
+            # 内容被替换（非清空），后台重建向量数据
+            _chapter_id = chapter.id
+            _content = chapter.content
+            _chapter_number = chapter.chapter_number
+            _project_id = chapter.project_id
+            _user_id = user_id
+
+            async def _rebuild_vectors(
+                ch_id: str, ch_content: str, ch_number: int, proj_id: str,
+                bg_user_id: str, ai_svc: AIService
+            ):
+                """后台任务：删除旧向量并重新切片入库"""
                 try:
-                    await memory_service.delete_chapter_memories(
-                        user_id=user_id,
-                        project_id=chapter.project_id,
-                        chapter_id=chapter_id
+                    from app.database import get_engine
+                    from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession as BgAsyncSession
+                    engine = await get_engine(bg_user_id)
+                    BgSessionLocal = async_sessionmaker(
+                        engine, class_=BgAsyncSession, expire_on_commit=False
                     )
-                    logger.info(f"✅ 已清理章节 {chapter_id[:8]} 的向量记忆数据")
+                    async with BgSessionLocal() as bg_db:
+                        service = ChapterMemoryService(db=bg_db, ai_service=ai_svc)
+                        rebuild_result = await service.process_and_store_chapter(
+                            chapter_id=ch_id,
+                            content=ch_content,
+                            chapter_number=ch_number,
+                            project_id=proj_id,
+                        )
+                        logger.info(
+                            f"📦 章节内容更新 - 向量重建完成: chapter={ch_id[:8]}, "
+                            f"chunks={rebuild_result.get('stored_count', 0)}, "
+                            f"state_change={'yes' if rebuild_result.get('state_change_log') else 'no'}"
+                        )
                 except Exception as e:
-                    logger.warning(f"⚠️ 清理向量记忆数据失败: {str(e)}")
-                
-                # 🔮 清理章节相关的分析伏笔数据
-                try:
-                    foreshadow_result = await foreshadow_service.delete_chapter_foreshadows(
-                        db=db,
-                        project_id=chapter.project_id,
-                        chapter_id=chapter_id,
-                        only_analysis_source=True  # 只删除分析来源的伏笔，保留手动创建的
-                    )
-                    if foreshadow_result['deleted_count'] > 0:
-                        logger.info(f"🔮 已清理章节 {chapter_id[:8]} 的 {foreshadow_result['deleted_count']} 个伏笔数据")
-                except Exception as e:
-                    logger.warning(f"⚠️ 清理伏笔数据失败: {str(e)}")
-                
-                logger.info(f"🗑️ 章节 {chapter_id[:8]} 内容已清空，已清理分析、记忆和伏笔数据")
+                    logger.warning(f"⚠️ 章节内容更新 - 向量重建失败（不影响保存）: {e}")
+
+            background_tasks.add_task(
+                _rebuild_vectors,
+                _chapter_id, _content, _chapter_number, _project_id,
+                _user_id, user_ai_service
+            )
     
     await db.commit()
     await db.refresh(chapter)
@@ -1220,7 +1494,44 @@ async def analyze_chapter_background(
         async with write_lock:
             task.progress = 60
             await db_session.commit()
-        
+
+        # 3.5 运行 CriticAgent 三维度评审（ooc, consistency, three_line_rhythm）
+        critic_result = None
+        try:
+            project_result = await db_session.execute(
+                select(Project).where(Project.id == project_id)
+            )
+            project = project_result.scalar_one_or_none()
+
+            if project:
+                outline_text = ""
+                if chapter.outline_id:
+                    outline_result = await db_session.execute(
+                        select(Outline).where(Outline.id == chapter.outline_id)
+                    )
+                    outline_obj = outline_result.scalar_one_or_none()
+                    if outline_obj:
+                        outline_text = outline_obj.content or outline_obj.title or ""
+
+                review_data = await _build_quick_review_data(
+                    db_session=db_session,
+                    project=project,
+                    chapter=chapter,
+                    chapter_outline=outline_text,
+                )
+                review_data["content"] = chapter.content
+
+                critic_agent = CriticAgent(db=db_session, ai_service=ai_service)
+                critic_result = await critic_agent.quick_review_content(
+                    content=chapter.content,
+                    chapter_data=review_data,
+                    pass_threshold=0,  # 分析模式不做门控，只需要评分
+                )
+                logger.info(f"📊 CriticAgent 分析完成: overall={critic_result.get('overall_score', 0):.1f}")
+        except Exception as critic_error:
+            logger.warning(f"⚠️ CriticAgent 分析失败（不影响主分析流程）: {critic_error}")
+            critic_result = None
+
         # 4. 保存分析结果到数据库（写操作，需要锁）
         async with write_lock:
             existing_analysis_result = await db_session.execute(
@@ -1254,6 +1565,21 @@ async def analyze_chapter_background(
                 existing_analysis.suggestions = analysis_result.get('suggestions', [])
                 existing_analysis.dialogue_ratio = analysis_result.get('dialogue_ratio', 0)
                 existing_analysis.description_ratio = analysis_result.get('description_ratio', 0)
+                # 保存 CriticAgent 评分
+                if critic_result and critic_result.get("details"):
+                    details = critic_result["details"]
+                    existing_analysis.ooc_score = details.get("ooc", {}).get("score", 0)
+                    existing_analysis.consistency_score = details.get("consistency", {}).get("score", 0)
+                    existing_analysis.three_line_rhythm_score = details.get("three_line_rhythm", {}).get("score", 0)
+                    existing_analysis.critic_details = {
+                        dim: {
+                            "score": info.get("score", 0),
+                            "analysis": info.get("analysis", ""),
+                            "suggestions": info.get("suggestions", []),
+                        }
+                        for dim, info in details.items()
+                        if dim != "error"
+                    }
             else:
                 # 创建新记录
                 logger.info(f"  创建新的分析记录")
@@ -1282,15 +1608,102 @@ async def analyze_chapter_background(
                     analysis_report=analyzer.generate_analysis_summary(analysis_result),
                     suggestions=analysis_result.get('suggestions', []),
                     dialogue_ratio=analysis_result.get('dialogue_ratio', 0),
-                    description_ratio=analysis_result.get('description_ratio', 0)
+                    description_ratio=analysis_result.get('description_ratio', 0),
+                    ooc_score=critic_result.get("details", {}).get("ooc", {}).get("score", 0) if critic_result and critic_result.get("details") else None,
+                    consistency_score=critic_result.get("details", {}).get("consistency", {}).get("score", 0) if critic_result and critic_result.get("details") else None,
+                    three_line_rhythm_score=critic_result.get("details", {}).get("three_line_rhythm", {}).get("score", 0) if critic_result and critic_result.get("details") else None,
+                    critic_details={
+                        dim: {
+                            "score": info.get("score", 0),
+                            "analysis": info.get("analysis", ""),
+                            "suggestions": info.get("suggestions", []),
+                        }
+                        for dim, info in critic_result["details"].items()
+                        if dim != "error"
+                    } if critic_result and critic_result.get("details") else None,
                 )
                 db_session.add(plot_analysis)
             
             await db_session.commit()
-            
+
+            # 4.5 从分析评分生成 review_result（替代独立审查功能）
+            try:
+                scores = analysis_result.get('scores', {})
+                suggestions = analysis_result.get('suggestions', [])
+
+                # 将 1-10 分制转换为 0-100 分制
+                pacing_score = min(100, int(scores.get('pacing', 0) * 10))
+                engagement_score = min(100, int(scores.get('engagement', 0) * 10))
+                coherence_score = min(100, int(scores.get('coherence', 0) * 10))
+                overall_score = min(100, int(scores.get('overall', 0) * 10))
+
+                score_justification = scores.get('score_justification', '')
+
+                critic_details = critic_result.get("details", {}) if critic_result else {}
+
+                review_result = {
+                    "overall_score": overall_score,
+                    "dimensions": {
+                        "pacing": {
+                            "dimension": "节奏分析",
+                            "score": pacing_score,
+                            "analysis": score_justification if score_justification else f"节奏评分 {pacing_score}/100",
+                            "suggestions": suggestions[:3] if suggestions else [],
+                            "details": {}
+                        },
+                        "engagement": {
+                            "dimension": "吸引力",
+                            "score": engagement_score,
+                            "analysis": f"吸引力评分 {engagement_score}/100",
+                            "suggestions": [],
+                            "details": {}
+                        },
+                        "coherence": {
+                            "dimension": "连贯性",
+                            "score": coherence_score,
+                            "analysis": f"连贯性评分 {coherence_score}/100",
+                            "suggestions": [],
+                            "details": {}
+                        },
+                        "ooc": {
+                            "dimension": "角色一致性",
+                            "score": critic_details.get("ooc", {}).get("score", 0),
+                            "analysis": critic_details.get("ooc", {}).get("analysis", "未执行"),
+                            "suggestions": critic_details.get("ooc", {}).get("suggestions", []),
+                            "details": {}
+                        },
+                        "consistency": {
+                            "dimension": "设定一致性",
+                            "score": critic_details.get("consistency", {}).get("score", 0),
+                            "analysis": critic_details.get("consistency", {}).get("analysis", "未执行"),
+                            "suggestions": critic_details.get("consistency", {}).get("suggestions", []),
+                            "details": {}
+                        },
+                        "three_line_rhythm": {
+                            "dimension": "三线节奏",
+                            "score": critic_details.get("three_line_rhythm", {}).get("score", 0),
+                            "analysis": critic_details.get("three_line_rhythm", {}).get("analysis", "未执行"),
+                            "suggestions": critic_details.get("three_line_rhythm", {}).get("suggestions", []),
+                            "details": {}
+                        },
+                    },
+                    "reviewed_at": datetime.now().isoformat(),
+                    "metadata": {
+                        "source": "analysis",
+                        "word_count": chapter.word_count or len(chapter.content or ""),
+                        "has_critic_review": critic_result is not None,
+                    }
+                }
+
+                chapter.review_result = review_result
+                await db_session.commit()
+                logger.info(f"📊 已从分析评分生成 review_result: overall={overall_score}")
+            except Exception as review_build_error:
+                logger.warning(f"⚠️ 生成 review_result 失败（不影响分析流程）: {review_build_error}")
+
             task.progress = 80
             await db_session.commit()
-        
+
         # 5. 清理旧的分析伏笔（重新分析时需要先清理）
         try:
             async with write_lock:
@@ -1568,7 +1981,7 @@ async def generate_chapter_content_stream(
     request: Request,
     background_tasks: BackgroundTasks,
     generate_request: ChapterGenerateRequest = ChapterGenerateRequest(),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_task_ai_service("writing"))
 ):
     """
     根据大纲、前置章节内容和项目信息AI创作章节完整内容（流式返回）
@@ -1875,6 +2288,50 @@ async def generate_chapter_content_stream(
                         f"摘要={context_enhancement.get('metadata', {}).get('summaries_count', 0)}"
                     )
 
+                # === 反幻觉预处理：导演预规划 + 角色名单构建 ===
+                director_plan_block = ""
+                char_lists = {"forbidden": [], "new_characters": [], "introduced": []}
+                try:
+                    char_lists = await _build_character_lists(
+                        db_session=db_session,
+                        project=project,
+                        chapter_outline=chapter_context.chapter_outline,
+                        chapter_number=current_chapter.chapter_number,
+                    )
+                    if char_lists["forbidden"]:
+                        logger.info(f"🚫 禁止角色名单: {char_lists['forbidden'][:5]}...")
+                    if char_lists["new_characters"]:
+                        logger.info(f"🆕 新角色名单: {char_lists['new_characters']}")
+                except Exception as e:
+                    logger.warning(f"⚠️ 角色名单构建失败（不影响生成）: {e}")
+
+                if settings.enable_director_plan:
+                    try:
+                        # 获取上一章摘要
+                        prev_summary_for_director = "无"
+                        if current_chapter.chapter_number > 1:
+                            ps_result = await db_session.execute(
+                                select(Chapter.summary)
+                                .where(Chapter.project_id == project.id)
+                                .where(Chapter.chapter_number == current_chapter.chapter_number - 1)
+                            )
+                            prev_summary_for_director = ps_result.scalar_one_or_none() or "无"
+
+                        director_plan = await _generate_director_plan(
+                            ai_service=user_ai_service,
+                            previous_summary=prev_summary_for_director,
+                            chapter_outline=chapter_context.chapter_outline,
+                            introduced_characters=", ".join(char_lists.get("introduced", [])) or "无",
+                            new_characters=", ".join(char_lists.get("new_characters", [])) or "无",
+                            narrative_perspective=chapter_perspective,
+                            user_id=current_user_id,
+                            db_session=db_session,
+                        )
+                        if director_plan:
+                            director_plan_block = _format_director_plan_block(director_plan)
+                    except Exception as e:
+                        logger.warning(f"⚠️ 导演预规划失败（不影响生成）: {e}")
+
                 # === 准备阶段 ===
                 yield await tracker.preparing("准备AI提示词...")
                 
@@ -1892,13 +2349,14 @@ async def generate_chapter_content_stream(
                     logger.info(f"✅ 已将写作风格注入系统提示词（{len(style_content)}字符）")
 
                 final_system_prompt = _merge_system_prompts(
+                    director_plan_block,
                     system_prompt_with_style,
                     context_system_prompt,
                 )
-                
+
                 # 🔢 计算 max_tokens 限制
-                # 中文字符约 1.5-2 个 token，使用 2.5 倍系数确保有足够空间完成段落
-                # 同时设置上限防止过长，下限确保基本可用
+                # 中文字符约 1.5-2 个 token，使用 3 倍系数确保有足够空间完成内容
+                # 字数控制主要依靠提示词约束，max_tokens 仅作为安全上限
                 calculated_max_tokens = int(target_word_count * 3)
                 calculated_max_tokens = max(2000, min(calculated_max_tokens, 16000))  # 限制在 2000-16000 之间
                 logger.info(f"📊 目标字数: {target_word_count}, 计算 max_tokens: {calculated_max_tokens}")
@@ -1919,19 +2377,19 @@ async def generate_chapter_content_stream(
                 # === 生成阶段 ===
                 full_content = ""
                 chunk_count = 0
-                
+
                 yield await tracker.generating(
                     current_chars=0,
                     estimated_total=target_word_count
                 )
-                
+
                 async for chunk in user_ai_service.generate_text_stream(**generate_kwargs):
                     full_content += chunk
                     chunk_count += 1
-                    
+
                     # 发送内容块
                     yield await tracker.generating_chunk(chunk)
-                    
+
                     # 每5个chunk发送一次进度更新
                     if chunk_count % 5 == 0:
                         yield await tracker.generating(
@@ -1939,18 +2397,26 @@ async def generate_chapter_content_stream(
                             estimated_total=target_word_count,
                             message=f'正在创作中... 已生成 {len(full_content)} 字'
                         )
-                    
+
                     # 每20个chunk发送心跳
                     if chunk_count % 20 == 0:
                         yield await tracker.heartbeat()
-                    
+
                     await asyncio.sleep(0)  # 让出控制权
                 
-                # === 质量门控阶段 ===
+                # === 质量门控阶段（使用 review 渠道 AI 服务）===
+                try:
+                    review_ai_service_for_gate = await _resolve_task_ai_service_standalone(
+                        user_id=current_user_id, task_type="review", db_session=db_session
+                    )
+                except Exception as resolve_err:
+                    logger.warning(f"⚠️ 解析 review 渠道失败，回退 writing 渠道: {resolve_err}")
+                    review_ai_service_for_gate = user_ai_service
+
                 yield await tracker.preparing("执行质量门控审查...")
                 quality_gate_result = await _apply_quality_gate_with_rewrite(
                     db_session=db_session,
-                    ai_service=user_ai_service,
+                    ai_service=review_ai_service_for_gate,
                     project=project,
                     chapter=current_chapter,
                     chapter_outline=chapter_context.chapter_outline,
@@ -1968,6 +2434,20 @@ async def generate_chapter_content_stream(
                 elif not quality_gate_result.get("passed", True):
                     yield await tracker.warning(
                         f"质量门控未达阈值，保留当前版本（评分 {quality_gate_result['overall_score']:.1f}）"
+                    )
+
+                # === 规则护栏检查（零 AI 调用，违规时可触发一次重写）===
+                if settings.enable_guardrails:
+                    yield await tracker.preparing("执行规则护栏检查...")
+                    full_content = await _apply_guardrails_check(
+                        ai_service=review_ai_service_for_gate,
+                        content=full_content,
+                        forbidden_names=char_lists.get("forbidden", []),
+                        new_characters=char_lists.get("new_characters", []),
+                        narrative_perspective=chapter_perspective,
+                        system_prompt=final_system_prompt,
+                        max_tokens=calculated_max_tokens,
+                        model=custom_model,
                     )
 
                 # === 保存阶段 ===
@@ -1996,17 +2476,8 @@ async def generate_chapter_content_stream(
                 await db_session.commit()
                 db_committed = True
                 await db_session.refresh(current_chapter)
-                
-                logger.info(f"成功创作章节 {chapter_id}，共 {new_word_count} 字")
 
-                # 触发后台审查（不阻塞主流程）
-                background_tasks.add_task(
-                    review_chapter_background,
-                    chapter_id=chapter_id,
-                    user_id=current_user_id,
-                    ai_service=user_ai_service
-                )
-                logger.info(f"🔍 已触发后台审查: chapter_id={chapter_id[:8]}")
+                logger.info(f"成功创作章节 {chapter_id}，共 {new_word_count} 字")
 
                 # Data Agent：章节切片向量化 + 状态提取 + 摘要钩子同步
                 data_agent_result = await _run_data_agent_pipeline(
@@ -2052,14 +2523,22 @@ async def generate_chapter_content_stream(
                 # 短暂延迟确保SQLite WAL完成写入
                 await asyncio.sleep(0.05)
                 
-                # 直接启动后台分析（并发执行）
+                # 直接启动后台分析（并发执行，使用 review 渠道的 AI 服务）
+                try:
+                    review_ai_service = await _resolve_task_ai_service_standalone(
+                        user_id=current_user_id, task_type="review", db_session=db_session
+                    )
+                except Exception as resolve_err:
+                    logger.warning(f"⚠️ 解析 review 渠道失败，回退默认: {resolve_err}")
+                    review_ai_service = user_ai_service
+
                 background_tasks.add_task(
                     analyze_chapter_background,
                     chapter_id=chapter_id,
                     user_id=current_user_id,
                     project_id=project.id,
                     task_id=task_id,
-                    ai_service=user_ai_service
+                    ai_service=review_ai_service
                 )
                 
                 yield await tracker.saving("章节保存完成", 0.8)
@@ -2090,42 +2569,9 @@ async def generate_chapter_content_stream(
         except GeneratorExit:
             # SSE连接断开
             logger.warning("章节生成器被提前关闭（SSE断开）")
-            if db_session and not db_committed:
-                try:
-                    if db_session.in_transaction():
-                        await db_session.rollback()
-                        logger.info("章节生成事务已回滚（GeneratorExit）")
-                except Exception as e:
-                    logger.error(f"GeneratorExit回滚失败: {str(e)}")
         except Exception as e:
             logger.error(f"流式创作章节失败: {str(e)}")
-            if db_session and not db_committed:
-                try:
-                    if db_session.in_transaction():
-                        await db_session.rollback()
-                        logger.info("章节生成事务已回滚（异常）")
-                except Exception as rollback_error:
-                    logger.error(f"回滚失败: {str(rollback_error)}")
             yield await tracker.error(str(e))
-        finally:
-            # 确保数据库会话被正确关闭
-            if db_session:
-                try:
-                    # 最后检查：确保没有未提交的事务
-                    if not db_committed and db_session.in_transaction():
-                        await db_session.rollback()
-                        logger.warning("在finally中发现未提交事务，已回滚")
-                    
-                    await db_session.close()
-                    logger.info("数据库会话已关闭")
-                except Exception as close_error:
-                    logger.error(f"关闭数据库会话失败: {str(close_error)}")
-                    # 强制关闭
-                    try:
-                        await db_session.close()
-                    except:
-                        pass
-    
     return create_sse_response(event_generator())
 
 
@@ -2688,7 +3134,7 @@ async def trigger_chapter_analysis(
     request: Request,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_task_ai_service("review"))
 ):
     """
     手动触发章节分析(用于重新分析或分析旧章节)
@@ -2785,7 +3231,7 @@ async def batch_generate_chapters_in_order(
     request: Request,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_task_ai_service("writing"))
 ):
     """
     从指定章节开始，按顺序批量生成指定数量的章节
@@ -3138,13 +3584,19 @@ async def execute_batch_generation_in_order(
                                     await db_session.commit()
                                     await db_session.refresh(analysis_task)
                                 
-                                # 同步执行分析，直接使用返回值判断成功/失败
+                                # 同步执行分析，使用 review 渠道的 AI 服务
+                                try:
+                                    review_svc = await _resolve_task_ai_service_standalone(
+                                        user_id=user_id, task_type="review", db_session=db_session
+                                    )
+                                except Exception:
+                                    review_svc = ai_service
                                 analysis_result = await analyze_chapter_background(
                                     chapter_id=chapter_id,
                                     user_id=user_id,
                                     project_id=task.project_id,
                                     task_id=analysis_task.id,
-                                    ai_service=ai_service
+                                    ai_service=review_svc
                                 )
                                 
                                 # 直接根据返回值判断
@@ -3482,7 +3934,47 @@ async def generate_single_chapter_for_batch(
             f"✅ 批量生成 Context Agent 已注入: 检索片段={context_enhancement.get('metadata', {}).get('retrieved_chunks', 0)}, "
             f"摘要={context_enhancement.get('metadata', {}).get('summaries_count', 0)}"
         )
-    
+
+    # 反幻觉预处理：导演预规划 + 角色名单构建（批量生成）
+    batch_narrative_perspective = project.narrative_perspective or '第三人称'
+    director_plan_block = ""
+    char_lists = {"forbidden": [], "new_characters": [], "introduced": []}
+    try:
+        char_lists = await _build_character_lists(
+            db_session=db_session,
+            project=project,
+            chapter_outline=chapter_context.chapter_outline,
+            chapter_number=chapter.chapter_number,
+        )
+    except Exception as e:
+        logger.warning(f"⚠️ 批量生成 - 角色名单构建失败: {e}")
+
+    if settings.enable_director_plan:
+        try:
+            prev_summary_for_director = "无"
+            if chapter.chapter_number > 1:
+                ps_result = await db_session.execute(
+                    select(Chapter.summary)
+                    .where(Chapter.project_id == project.id)
+                    .where(Chapter.chapter_number == chapter.chapter_number - 1)
+                )
+                prev_summary_for_director = ps_result.scalar_one_or_none() or "无"
+
+            director_plan = await _generate_director_plan(
+                ai_service=ai_service,
+                previous_summary=prev_summary_for_director,
+                chapter_outline=chapter_context.chapter_outline,
+                introduced_characters=", ".join(char_lists.get("introduced", [])) or "无",
+                new_characters=", ".join(char_lists.get("new_characters", [])) or "无",
+                narrative_perspective=batch_narrative_perspective,
+                user_id=user_id,
+                db_session=db_session,
+            )
+            if director_plan:
+                director_plan_block = _format_director_plan_block(director_plan)
+        except Exception as e:
+            logger.warning(f"⚠️ 批量生成 - 导演预规划失败: {e}")
+
     # 🎨 方案一：将写作风格注入到系统提示词（批量生成）
     system_prompt_with_style = None
     if style_content:
@@ -3495,13 +3987,14 @@ async def generate_single_chapter_for_batch(
         logger.info(f"✅ 批量生成 - 已将写作风格注入系统提示词（{len(style_content)}字符）")
 
     final_system_prompt = _merge_system_prompts(
+        director_plan_block,
         system_prompt_with_style,
         context_system_prompt,
     )
-    
+
     # 🔢 计算 max_tokens 限制（批量生成）
-    # 中文字符约 1.5-2 个 token，使用 2.5 倍系数确保有足够空间完成段落
-    # 同时设置上限防止过长，下限确保基本可用
+    # 中文字符约 1.5-2 个 token，使用 3 倍系数确保有足够空间完成内容
+    # 字数控制主要依靠提示词约束，max_tokens 仅作为安全上限
     calculated_max_tokens = int(target_word_count * 3)
     calculated_max_tokens = max(2000, min(calculated_max_tokens, 16000))  # 限制在 2000-16000 之间
     logger.info(f"📊 批量生成 - 目标字数: {target_word_count}, 计算 max_tokens: {calculated_max_tokens}")
@@ -3524,10 +4017,18 @@ async def generate_single_chapter_for_batch(
     async for chunk in ai_service.generate_text_stream(**generate_kwargs):
         full_content += chunk
     
-    # 生成后质量门控（防幻觉）
+    # 生成后质量门控（使用 review 渠道 AI 服务）
+    try:
+        review_ai_service_for_gate = await _resolve_task_ai_service_standalone(
+            user_id=user_id, task_type="review", db_session=db_session
+        )
+    except Exception as resolve_err:
+        logger.warning(f"⚠️ 批量生成：解析 review 渠道失败，回退 writing 渠道: {resolve_err}")
+        review_ai_service_for_gate = ai_service
+
     quality_gate_result = await _apply_quality_gate_with_rewrite(
         db_session=db_session,
-        ai_service=ai_service,
+        ai_service=review_ai_service_for_gate,
         project=project,
         chapter=chapter,
         chapter_outline=chapter_context.chapter_outline,
@@ -3542,6 +4043,19 @@ async def generate_single_chapter_for_batch(
         logger.info(
             f"🔁 批量生成质量门控触发重写 {quality_gate_result['rewrite_count']} 次，"
             f"当前评分 {quality_gate_result['overall_score']:.1f}"
+        )
+
+    # 规则护栏检查（批量生成）
+    if settings.enable_guardrails:
+        full_content = await _apply_guardrails_check(
+            ai_service=review_ai_service_for_gate,
+            content=full_content,
+            forbidden_names=char_lists.get("forbidden", []),
+            new_characters=char_lists.get("new_characters", []),
+            narrative_perspective=batch_narrative_perspective,
+            system_prompt=final_system_prompt,
+            max_tokens=calculated_max_tokens,
+            model=custom_model,
         )
 
     # 更新章节内容到数据库（使用锁保护）
@@ -3569,19 +4083,6 @@ async def generate_single_chapter_for_batch(
         await db_session.refresh(chapter)
     
     logger.info(f"✅ 单章节生成完成: 第{chapter.chapter_number}章，共 {new_word_count} 字")
-
-    # 触发后台审查（不阻塞主流程）
-    try:
-        asyncio.create_task(
-            review_chapter_background(
-                chapter_id=chapter.id,
-                user_id=user_id,
-                ai_service=ai_service
-            )
-        )
-        logger.info(f"🔍 批量生成已触发后台审查: chapter_id={chapter.id[:8]}")
-    except Exception as review_error:
-        logger.warning(f"⚠️ 批量生成触发后台审查失败: {review_error}")
 
     # Data Agent：章节切片向量化 + 状态提取 + 摘要钩子同步
     data_agent_result = await _run_data_agent_pipeline(
@@ -3627,11 +4128,11 @@ async def regenerate_chapter_stream(
     regenerate_request: ChapterRegenerateRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_task_ai_service("writing"))
 ):
     """
     根据分析建议或自定义指令重新生成章节内容（流式返回）
-    
+
     工作流程：
     1. 验证章节和分析结果
     2. 创建重新生成任务
@@ -3943,32 +4444,17 @@ async def regenerate_chapter_stream(
             logger.error(f"❌ 重新生成失败: {str(e)}", exc_info=True)
             
             # 更新任务状态为失败
-            if db_session and not db_committed:
+            if db_session and 'regen_task' in locals():
                 try:
-                    task_result = await db_session.execute(
-                        select(RegenerationTask).where(RegenerationTask.chapter_id == chapter_id)
-                        .order_by(RegenerationTask.created_at.desc()).limit(1)
-                    )
-                    task = task_result.scalar_one_or_none()
-                    if task:
-                        task.status = 'failed'
-                        task.error_message = str(e)[:500]
-                        task.completed_at = datetime.now()
-                        await db_session.commit()
+                    regen_task.status = 'failed'
+                    regen_task.error_message = str(e)[:500]
+                    regen_task.completed_at = datetime.now()
+                    await db_session.commit()
                 except Exception as update_error:
                     logger.error(f"更新任务失败状态失败: {str(update_error)}")
             
             yield await tracker.error(str(e))
         
-        finally:
-            if db_session:
-                try:
-                    if not db_committed and db_session.in_transaction():
-                        await db_session.rollback()
-                    await db_session.close()
-                except Exception as close_error:
-                    logger.error(f"关闭数据库会话失败: {str(close_error)}")
-    
     return create_sse_response(event_generator())
 
 
@@ -4099,7 +4585,7 @@ async def partial_regenerate_stream(
     request: Request,
     partial_request: PartialRegenerateRequest,
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_task_ai_service("writing"))
 ):
     """
     对章节中选中的部分内容进行流式重写
@@ -4424,80 +4910,6 @@ async def apply_partial_regenerate(
     }
 
 
-# ==================== 后台审查与章节记忆 ====================
-
-async def review_chapter_background(
-    chapter_id: str,
-    user_id: str,
-    ai_service: AIService
-) -> bool:
-    """
-    后台异步审查章节（章节生成后自动执行）
-    """
-    from app.database import get_engine
-    from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
-
-    db_session = None
-    try:
-        engine = await get_engine(user_id)
-        AsyncSessionLocal = async_sessionmaker(
-            engine,
-            class_=AsyncSession,
-            expire_on_commit=False
-        )
-        db_session = AsyncSessionLocal()
-
-        result = await db_session.execute(
-            select(Chapter).where(Chapter.id == chapter_id)
-        )
-        chapter = result.scalar_one_or_none()
-
-        if not chapter or not chapter.content:
-            logger.warning(f"⚠️ 后台审查: 章节不存在或无内容 chapter_id={chapter_id}")
-            return False
-
-        if chapter.review_result:
-            logger.info(f"📋 后台审查: 已有缓存结果，跳过 chapter_id={chapter_id[:8]}")
-            return True
-
-        logger.info(f"🔍 后台审查开始: chapter_id={chapter_id[:8]}")
-
-        critic = CriticAgent(db=db_session, ai_service=ai_service)
-        review_result = await critic.review_chapter(chapter_id=chapter_id)
-
-        dimensions_cache = {}
-        for dim_name, dim_result in review_result.dimensions.items():
-            dimensions_cache[dim_name] = {
-                "dimension": dim_result.dimension,
-                "score": dim_result.score,
-                "analysis": dim_result.analysis,
-                "suggestions": dim_result.suggestions,
-                "details": dim_result.details
-            }
-
-        chapter.review_result = {
-            "overall_score": review_result.overall_score,
-            "dimensions": dimensions_cache,
-            "reviewed_at": review_result.reviewed_at,
-            "metadata": review_result.metadata
-        }
-        await db_session.commit()
-
-        logger.info(
-            f"✅ 后台审查完成: chapter_id={chapter_id[:8]}, "
-            f"综合评分={review_result.overall_score:.1f}"
-        )
-        return True
-
-    except Exception as e:
-        logger.error(f"❌ 后台审查失败: chapter_id={chapter_id}, error={e}", exc_info=True)
-        return False
-
-    finally:
-        if db_session:
-            await db_session.close()
-
-
 # ==================== 状态确认 API ====================
 
 @router.get("/{chapter_id}/pending-state", summary="获取章节待确认的状态变化")
@@ -4595,5 +5007,92 @@ async def reject_state_change(
     return {
         "success": True,
         "message": "状态变化已拒绝"
+    }
+
+
+@router.post("/project/{project_id}/batch-vectorize", summary="批量向量化项目章节")
+async def batch_vectorize_chapters(
+    project_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    对项目下所有有内容的章节批量执行切片+Embedding向量化存储。
+    适用于导入小说后章节未触发向量化的场景。
+    任务在后台执行，立即返回。
+    """
+    user_id = getattr(request.state, 'user_id', None)
+    await verify_project_access(project_id, user_id, db)
+
+    # 查询所有有内容的章节
+    result = await db.execute(
+        select(Chapter)
+        .where(Chapter.project_id == project_id)
+        .where(Chapter.content.isnot(None))
+        .where(func.length(Chapter.content) > 100)
+        .order_by(Chapter.chapter_number)
+    )
+    chapters = result.scalars().all()
+
+    if not chapters:
+        return {"success": True, "message": "没有需要向量化的章节", "total": 0}
+
+    chapter_infos = [
+        {
+            "id": ch.id,
+            "chapter_number": ch.chapter_number,
+            "content": ch.content,
+            "project_id": ch.project_id,
+        }
+        for ch in chapters
+    ]
+    total = len(chapter_infos)
+
+    async def _batch_vectorize(infos: list, bg_user_id: str):
+        """后台批量向量化"""
+        from app.database import get_engine
+        from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession as BgAsyncSession
+
+        engine = await get_engine(bg_user_id)
+        BgSessionLocal = async_sessionmaker(
+            engine, class_=BgAsyncSession, expire_on_commit=False
+        )
+
+        success_count = 0
+        fail_count = 0
+        for info in infos:
+            try:
+                async with BgSessionLocal() as bg_db:
+                    service = ChapterMemoryService(db=bg_db)
+                    res = await service.process_and_store_chapter(
+                        chapter_id=info["id"],
+                        content=info["content"],
+                        chapter_number=info["chapter_number"],
+                        project_id=info["project_id"],
+                    )
+                    stored = res.get("stored_count", 0)
+                    logger.info(
+                        f"📦 批量向量化 第{info['chapter_number']}章: "
+                        f"chunks={stored}"
+                    )
+                    success_count += 1
+            except Exception as e:
+                fail_count += 1
+                logger.error(
+                    f"❌ 批量向量化 第{info['chapter_number']}章失败: {e}"
+                )
+
+        logger.info(
+            f"✅ 批量向量化完成: 成功={success_count}, 失败={fail_count}, "
+            f"总计={success_count + fail_count}"
+        )
+
+    background_tasks.add_task(_batch_vectorize, chapter_infos, user_id)
+
+    return {
+        "success": True,
+        "message": f"已启动后台批量向量化，共 {total} 章",
+        "total": total,
     }
 

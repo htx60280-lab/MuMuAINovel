@@ -282,6 +282,31 @@ async def update_template(
     return template
 
 
+
+@router.delete("/custom/all")
+async def delete_all_custom_templates(
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    删除当前用户全部自定义提示词
+    """
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+
+    result = await db.execute(
+        delete(PromptTemplate).where(PromptTemplate.user_id == user_id)
+    )
+    await db.commit()
+
+    deleted_count = result.rowcount or 0
+    logger.info(f"用户 {user_id} 批量删除自定义提示词，共 {deleted_count} 条")
+
+    return {
+        "message": "自定义提示词已删除",
+        "deleted_count": deleted_count
+    }
 @router.delete("/{template_key}")
 async def delete_template(
     template_key: str,

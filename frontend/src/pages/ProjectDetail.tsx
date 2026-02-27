@@ -14,7 +14,6 @@ import {
   BankOutlined,
   EditOutlined,
   FundOutlined,
-  HeartOutlined,
   TrophyOutlined,
   BulbOutlined,
   CloudOutlined,
@@ -98,11 +97,6 @@ export default function ProjectDetail() {
 
   const menuItems = [
     {
-      key: 'sponsor',
-      icon: <HeartOutlined />,
-      label: <Link to={`/project/${projectId}/sponsor`}>赞助支持</Link>,
-    },
-    {
       key: 'world-setting',
       icon: <GlobalOutlined />,
       label: <Link to={`/project/${projectId}/world-setting`}>世界设定</Link>,
@@ -178,9 +172,8 @@ export default function ProjectDetail() {
     if (path.includes('/chapters')) return 'chapters';
     if (path.includes('/writing-styles')) return 'writing-styles';
     if (path.includes('/prompt-workshop')) return 'prompt-workshop';
-    if (path.includes('/sponsor')) return 'sponsor';
     // if (path.includes('/polish')) return 'polish';
-    return 'sponsor'; // 默认选中赞助支持
+    return 'world-setting'; // 默认选中世界设定
   }, [location.pathname]);
 
   if (loading || !currentProject) {

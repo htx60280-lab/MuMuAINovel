@@ -387,7 +387,7 @@ class CharacterStateUpdateService:
                         )
                     )
                 )
-                existing_rel = existing_rel_result.scalar_one_or_none()
+                existing_rel = existing_rel_result.scalars().first()
 
                 # 计算亲密度调整
                 intimacy_delta = CharacterStateUpdateService._calculate_intimacy_delta(change_desc)

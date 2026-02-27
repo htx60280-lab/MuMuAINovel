@@ -28,38 +28,6 @@
 
 ---
 
-<div align="center">
-
-## 💖 支持项目
-
-如果这个项目对你有帮助，欢迎通过以下方式支持开发：
-
-**[☕ 请我喝杯咖啡](https://mumuverse.space:1588/)**
-
-### 🎁 赞助专属权益
-
-| 权益 | 说明 |
-|------|------|
-| 📋 **优先需求响应** | 您的功能需求和问题反馈将获得优先处理 |
-| 🚀 **Windows一键启动** | 获取免安装EXE程序，双击即可使用 |
-| 💬 **专属技术支持** | 加入赞助者内部群，获得远程协助和配置指导 |
-
-### ☕ 赞助金额
-
-| 金额 | 描述 |
-|------|------|
-| ¥5 | 🌶️ 一包辣条 |
-| ¥10 | 🍱 一顿拼好饭 |
-| ¥20 | 🧋 一杯咖啡 |
-| ¥50 | 🍖 一次烧烤 |
-| ¥99 | 🍲 一顿海底捞 |
-
-您的支持是我持续开发的动力！🙏
-
-</div>
-
----
-
 ## ✨ 特性
 
 - 🤖 **多 AI 模型** - 支持 OpenAI、Gemini、Claude 等主流模型
@@ -67,6 +35,10 @@
 - 👥 **角色管理** - 人物关系、组织架构可视化管理
 - 📖 **章节编辑** - 支持创建、编辑、重新生成和润色
 - 🌐 **世界观设定** - 构建完整的故事背景
+- 🛡️ **反幻觉系统** - 导演预规划 + 精确实体检索 + 规则护栏，减少角色混淆和设定遗忘
+- 🎯 **任务渠道** - 为大纲/写作/润色/审查分别指定不同 AI 预设
+- 📊 **CriticAgent 评分** - 自动评估角色一致性、设定一致性、三线节奏
+- 🔍 **Qdrant 支持** - 可选 Qdrant 向量数据库，与 pgvector 双后端切换
 - 🔐 **多种登录** - LinuxDO OAuth 或本地账户登录
 - 💾 **PostgreSQL** - 生产级数据库，多用户数据隔离
 - 🐳 **Docker 部署** - 一键启动，开箱即用
@@ -88,9 +60,6 @@
 ### 项目管理
 ![项目管理](images/3.png)
 
-### 赞助我 💖
-![赞助我](images/4.png)
-
 </div>
 
 </details>
@@ -111,6 +80,13 @@
 - [x] **角色/组织卡片导入导出** - 单独导出角色和组织卡片，支持跨项目数据共享
 - [x] **伏笔管理** - 智能追踪剧情伏笔，提醒未回收线索，可视化伏笔时间线
 - [x] **提示词工坊** - 社区驱动的 Prompt 模板分享平台，一键导入优质提示词
+- [x] **反幻觉/反遗忘系统** - 导演预规划、精确实体检索、规则护栏三重机制，减少角色混淆和设定遗忘
+- [x] **任务渠道系统** - 为不同任务类型（大纲/写作/润色/审查）指定不同 AI 预设
+- [x] **CriticAgent 评分** - 自动三维度质量评审（角色一致性/设定一致性/三线节奏），集成到分析流程
+- [x] **Qdrant 向量数据库** - 支持 pgvector / Qdrant 双后端切换，可按需选择向量存储方案
+- [x] **SSE 心跳保活** - 解决反向代理空闲超时断连问题
+- [x] **批量向量化** - 导入小说后一键批量 Embedding 向量化
+- [x] **JSON 解析增强** - 多层修复策略，兼容推理模型思考标签和截断响应
 
 ### 📝 规划中功能
 
@@ -427,6 +403,17 @@ LINUXDO_REDIRECT_URI=http://localhost:8000/api/auth/callback
 # PostgreSQL 连接池（高并发优化）
 DATABASE_POOL_SIZE=30
 DATABASE_MAX_OVERFLOW=20
+
+# Qdrant 向量数据库（可选，默认使用 pgvector）
+VECTOR_DB_PROVIDER=pgvector  # pgvector | qdrant
+QDRANT_URL=http://localhost:6333
+QDRANT_API_KEY=
+
+# 反幻觉/反遗忘系统（均默认开启，可按需关闭）
+ENABLE_DIRECTOR_PLAN=true
+ENABLE_PRECISE_SEARCH=true
+ENABLE_GUARDRAILS=true
+GUARDRAILS_AUTO_REWRITE=true
 ```
 
 ### 中转 API 配置
@@ -451,6 +438,11 @@ OPENAI_BASE_URL=https://your-proxy-service.com/v1
   - 数据持久化: `postgres_data` volume
   - 初始化脚本: `backend/scripts/init_postgres.sql`（自动挂载）
   - 优化配置: 支持 80-150 并发用户
+
+- **qdrant**（可选）: Qdrant 向量数据库
+  - 端口: 6333（HTTP）/ 6334（gRPC）
+  - 数据持久化: `qdrant_data` volume
+  - 需设置 `VECTOR_DB_PROVIDER=qdrant` 启用
 
 - **mumuainovel**: 主应用服务
   - 端口: 8000
@@ -495,6 +487,7 @@ docker stats
 ### 数据持久化
 
 - `./postgres_data` - PostgreSQL 数据库文件
+- `./qdrant_data` - Qdrant 向量数据（使用 Qdrant 时）
 - `./logs` - 应用日志文件
 
 ### 端口配置
@@ -534,7 +527,7 @@ MuMuAINovel/
 
 ## 🛠️ 技术栈
 
-**后端**: FastAPI • PostgreSQL • SQLAlchemy • OpenAI/Claude/Gemini SDK
+**后端**: FastAPI • PostgreSQL • SQLAlchemy • Qdrant • OpenAI/Claude/Gemini SDK
 
 **前端**: React 18 • TypeScript • Ant Design • Zustand • Vite
 

@@ -8,7 +8,7 @@ from app.api.common import verify_project_access
 from app.models.chapter import Chapter
 from app.services.critic_agent import CriticAgent
 from app.services.ai_service import AIService
-from app.api.settings import get_user_ai_service
+from app.api.settings import get_task_ai_service
 from app.schemas.review import ReviewRequest, ReviewResponse, DimensionResultResponse
 from app.logger import get_logger
 
@@ -23,7 +23,7 @@ async def review_chapter(
     request: Request,
     review_request: ReviewRequest = ReviewRequest(),
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_task_ai_service("review"))
 ):
     """
     对章节进行 AI 深度审查，分析四个维度：

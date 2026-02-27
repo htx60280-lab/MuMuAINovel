@@ -84,6 +84,24 @@ export interface PresetListResponse {
   active_preset_id?: string;
 }
 
+// 任务渠道类型定义
+export type TaskType = 'outline' | 'writing' | 'polish' | 'review';
+
+export interface TaskChannelItem {
+  preset_id: string | null;
+  _invalid?: boolean;
+}
+
+export interface TaskChannelsResponse {
+  channels: Record<TaskType, TaskChannelItem>;
+  available_presets: Array<{
+    id: string;
+    name: string;
+    provider: string;
+    model: string;
+  }>;
+}
+
 // LinuxDO 授权 URL 响应
 export interface AuthUrlResponse {
   auth_url: string;
@@ -336,18 +354,6 @@ export interface ReviewResult {
   dimensions: Record<string, ReviewDimensionResult>;
   reviewed_at: string;
   metadata: Record<string, unknown>;
-}
-
-export interface ReviewRequest {
-  dimensions?: string[];
-  force_refresh?: boolean;
-}
-
-export interface ReviewDimension {
-  id: string;
-  name: string;
-  description: string;
-  icon: string;
 }
 
 export interface ChapterCreate {
@@ -711,6 +717,14 @@ export interface AnalysisData {
   pacing_score: number;
   engagement_score: number;
   coherence_score: number;
+  ooc_score: number;
+  consistency_score: number;
+  three_line_rhythm_score: number;
+  critic_details: Record<string, {
+    score: number;
+    analysis: string;
+    suggestions: string[];
+  }>;
   analysis_report: string;
   suggestions: string[];
   dialogue_ratio: number;

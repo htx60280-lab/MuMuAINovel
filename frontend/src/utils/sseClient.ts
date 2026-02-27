@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export interface SSEMessage {
-  type: 'progress' | 'chunk' | 'result' | 'error' | 'done';
+  type: 'progress' | 'chunk' | 'content' | 'result' | 'error' | 'done' | 'start' | 'warning' | 'analysis_started' | 'analysis_queued';
   message?: string;
   progress?: number;
   word_count?: number;
@@ -9,6 +9,7 @@ export interface SSEMessage {
   data?: any;
   error?: string;
   code?: number;
+  task_id?: string;
 }
 
 export interface SSEClientOptions {
@@ -24,7 +25,7 @@ export class SSEClient {
   private eventSource: EventSource | null = null;
   private url: string;
   private options: SSEClientOptions;
-  private accumulatedContent: string = '';
+  private accumulatedContent = '';
 
   constructor(url: string, options: SSEClientOptions = {}) {
     this.url = url;
@@ -53,7 +54,6 @@ export class SSEClient {
           this.close();
           reject(new Error('SSE连接失败'));
         };
-
       } catch (error) {
         reject(error);
       }
@@ -127,8 +127,9 @@ export class SSEPostClient {
   private data: any;
   private options: SSEClientOptions;
   private abortController: AbortController | null = null;
-  private accumulatedContent: string = '';
+  private accumulatedContent = '';
   private resultData: any = null;
+  private settled = false;
 
   constructor(url: string, data: any, options: SSEClientOptions = {}) {
     this.url = url;
@@ -138,79 +139,118 @@ export class SSEPostClient {
 
   async connect(): Promise<any> {
     return new Promise((resolve, reject) => {
-      this.connectInternal(resolve, reject);
+      void this.connectInternal(resolve, reject);
     });
   }
 
   private async connectInternal(resolve: (value: any) => void, reject: (reason?: any) => void) {
-      try {
-        this.abortController = new AbortController();
+    try {
+      this.abortController = new AbortController();
 
-        const response = await fetch(this.url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(this.data),
-          signal: this.abortController.signal,
-        });
+      const response = await fetch(this.url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(this.data),
+        signal: this.abortController.signal,
+      });
 
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+
+      if (!reader) {
+        throw new Error('无法获取响应流');
+      }
+
+      const parseBlock = async (block: string) => {
+        if (block.trim() === '' || block.startsWith(':')) {
+          return;
         }
 
-        const reader = response.body?.getReader();
-        const decoder = new TextDecoder();
+        const dataLines = block
+          .split(/\r?\n/)
+          .filter(line => line.startsWith('data:'))
+          .map(line => line.slice(5).trimStart());
 
-        if (!reader) {
-          throw new Error('无法获取响应流');
+        if (dataLines.length === 0) {
+          return;
         }
 
-        let buffer = '';
-        while (true) {
-          const { done, value } = await reader.read();
+        const message: SSEMessage = JSON.parse(dataLines.join('\n'));
+        await this.handleMessage(message, resolve, reject);
+      };
 
-          if (done) {
-            break;
-          }
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
 
-          buffer += decoder.decode(value, { stream: true });
-
-          const lines = buffer.split('\n\n');
-          buffer = lines.pop() || '';
-
-          for (const line of lines) {
-            if (line.trim() === '' || line.startsWith(':')) {
-              continue;
-            }
-
-            try {
-              // 解析数据
-              const dataMatch = line.match(/^data: (.+)$/m);
-              if (dataMatch) {
-                const data = JSON.parse(dataMatch[1]);
-
-                // 标准消息处理
-                const message: SSEMessage = data;
-                await this.handleMessage(message, resolve, reject);
-              }
-            } catch (error) {
-              console.error('解析SSE消息失败:', error, line);
-            }
-          }
+        if (done) {
+          break;
         }
 
-      } catch (error: any) {
-        if (error.name === 'AbortError') {
-          console.log('请求已取消');
-        } else {
-          console.error('SSE POST请求失败:', error);
-          if (this.options.onError) {
-            this.options.onError(error.message || '请求失败');
+        buffer += decoder.decode(value, { stream: true });
+
+        const blocks = buffer.split(/\r?\n\r?\n/);
+        buffer = blocks.pop() || '';
+
+        for (const block of blocks) {
+          try {
+            await parseBlock(block);
+          } catch (error) {
+            console.error('解析SSE消息失败:', error, block);
           }
-          reject(error);
         }
       }
+
+      if (buffer.trim() !== '') {
+        const remainingBlocks = buffer.split(/\r?\n\r?\n/);
+        for (const block of remainingBlocks) {
+          try {
+            await parseBlock(block);
+          } catch (error) {
+            console.error('解析SSE尾部消息失败:', error, block);
+          }
+        }
+      }
+
+      if (this.settled) {
+        return;
+      }
+
+      if (this.resultData) {
+        this.resolveOnce(resolve, this.resultData);
+        return;
+      }
+
+      if (this.accumulatedContent) {
+        this.resolveOnce(resolve, { content: this.accumulatedContent });
+        return;
+      }
+
+      this.rejectOnce(reject, '连接中断，未收到完成信号');
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        console.log('请求已取消');
+        return;
+      }
+
+      if (this.settled) {
+        return;
+      }
+
+      if (this.resultData) {
+        this.resolveOnce(resolve, this.resultData);
+        return;
+      }
+
+      console.error('SSE POST请求失败:', error);
+      this.rejectOnce(reject, error.message || '请求失败');
+    }
   }
 
   private async handleMessage(message: SSEMessage, resolve: (value: any) => void, reject: (reason?: any) => void) {
@@ -243,25 +283,41 @@ export class SSEPostClient {
         break;
 
       case 'error':
-        if (this.options.onError) {
-          this.options.onError(message.error || '未知错误', message.code);
-        }
-        reject(new Error(message.error || '未知错误'));
+        this.rejectOnce(reject, message.error || '未知错误', message.code);
         break;
 
       case 'done':
-        if (this.options.onComplete) {
-          this.options.onComplete();
-        }
         if (this.resultData) {
-          resolve(this.resultData);
+          this.resolveOnce(resolve, this.resultData);
         } else if (this.accumulatedContent) {
-          resolve({ content: this.accumulatedContent });
+          this.resolveOnce(resolve, { content: this.accumulatedContent });
         } else {
-          resolve(true);
+          this.resolveOnce(resolve, true);
         }
         break;
     }
+  }
+
+  private resolveOnce(resolve: (value: any) => void, value: any) {
+    if (this.settled) {
+      return;
+    }
+    this.settled = true;
+    if (this.options.onComplete) {
+      this.options.onComplete();
+    }
+    resolve(value);
+  }
+
+  private rejectOnce(reject: (reason?: any) => void, error: string, code?: number) {
+    if (this.settled) {
+      return;
+    }
+    this.settled = true;
+    if (this.options.onError) {
+      this.options.onError(error, code);
+    }
+    reject(new Error(error));
   }
 
   abort() {

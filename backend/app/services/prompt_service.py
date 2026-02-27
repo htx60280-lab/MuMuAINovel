@@ -515,7 +515,7 @@ class PromptService:
 撰写第{chapter_number}章《{chapter_title}》的完整正文。
 
 【基本要求】
-- 目标字数：{target_word_count}字（允许±200字浮动）
+- 【严格字数控制】目标字数：{target_word_count}字（允许±10%浮动，严禁超过{target_word_count}字的130%，宁可精简也不要注水）
 - 叙事视角：{narrative_perspective}
 </task>
 
@@ -584,7 +584,7 @@ class PromptService:
 撰写第{chapter_number}章《{chapter_title}》的完整正文。
 
 【基本要求】
-- 目标字数：{target_word_count}字（允许±200字浮动）
+- 【严格字数控制】目标字数：{target_word_count}字（允许±10%浮动，严禁超过{target_word_count}字的130%，宁可精简也不要注水）
 - 叙事视角：{narrative_perspective}
 </task>
 
@@ -645,7 +645,7 @@ class PromptService:
 撰写第{chapter_number}章《{chapter_title}》的完整正文。
 
 【基本要求】
-- 目标字数：{target_word_count}字（允许±200字浮动）
+- 【严格字数控制】目标字数：{target_word_count}字（允许±10%浮动，严禁超过{target_word_count}字的130%，宁可精简也不要注水）
 - 叙事视角：{narrative_perspective}
 </task>
 
@@ -719,7 +719,7 @@ class PromptService:
 撰写第{chapter_number}章《{chapter_title}》的完整正文。
 
 【基本要求】
-- 目标字数：{target_word_count}字（允许±200字浮动）
+- 【严格字数控制】目标字数：{target_word_count}字（允许±10%浮动，严禁超过{target_word_count}字的130%，宁可精简也不要注水）
 - 叙事视角：{narrative_perspective}
 </task>
 
@@ -1544,6 +1544,37 @@ class PromptService:
 ❌ 相邻章节内容重复
 ❌ 与前序章节key_events雷同
 </constraints>"""
+
+    # 章节导演预规划提示词（反幻觉/反遗忘优化）
+    CHAPTER_DIRECTOR_PLAN = """你是一个章节导演。基于以下信息，为即将生成的章节制定结构化写作约束。
+
+【上一章摘要】
+{previous_summary}
+
+【本章大纲】
+{chapter_outline}
+
+【已登场角色】
+{introduced_characters}
+
+【本章可登场的新角色】
+{new_characters}
+
+【叙事视角】
+{narrative_perspective}
+
+请输出 JSON 格式的章节导演脚本：
+```json
+{{
+  "pov": "主视角角色名",
+  "opening_beat": "开场应从什么场景/状态切入（一句话）",
+  "core_event": "本章必须完成的核心事件（一句话）",
+  "forbidden_actions": ["角色X不应做的事", "不应出现的情节"],
+  "emotion_arc": "情绪走向（如：紧张→释然→伏笔）",
+  "must_mention": ["必须提及的关键设定/物品/关系"]
+}}
+```
+只输出 JSON，不要其他内容。"""
 
     # 章节重写系统提示词 V2（RTCO框架）
     CHAPTER_REGENERATION_SYSTEM = """<system>
@@ -2917,6 +2948,13 @@ class PromptService:
                 "category": "情节分析",
                 "description": "深度分析章节的剧情、钩子、伏笔等",
                 "parameters": ["chapter_number", "title", "content", "word_count"]
+            },
+            "CHAPTER_DIRECTOR_PLAN": {
+                "name": "章节导演预规划",
+                "category": "反幻觉优化",
+                "description": "生成前预规划章节约束（主视角、核心事件、禁止行为等）",
+                "parameters": ["previous_summary", "chapter_outline", "introduced_characters",
+                             "new_characters", "narrative_perspective"]
             },
             "OUTLINE_EXPAND_SINGLE": {
                 "name": "大纲单批次展开",

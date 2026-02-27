@@ -82,6 +82,12 @@ class Settings(BaseSettings):
     quality_gate_pass_threshold: float = 60.0  # 审查通过阈值
     quality_gate_max_retries: int = 2  # 最大重试次数
 
+    # 反幻觉/反遗忘优化配置
+    enable_director_plan: bool = True       # 是否启用导演预规划（+1次AI调用）
+    enable_precise_search: bool = True      # 是否启用精确实体检索
+    enable_guardrails: bool = True          # 是否启用规则护栏（零AI调用）
+    guardrails_auto_rewrite: bool = True    # 护栏违规是否自动重写
+
     # 独立 Embedding 服务配置（用于向量检索，与主 LLM 解耦）
     # 不配置则自动使用 openai_api_key 和 openai_base_url
     embedding_api_key: Optional[str] = None  # 可选：专用 Embedding API Key
@@ -89,6 +95,11 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-3-small"  # Embedding 模型名称
     # embedding_dimensions 会根据模型自动识别，也可手动覆盖
     embedding_dimensions: Optional[int] = None
+
+    # 外部向量数据库配置
+    vector_db_provider: str = "pgvector"  # pgvector | qdrant
+    qdrant_url: Optional[str] = None
+    qdrant_api_key: Optional[str] = None
 
     # MCP配置
     mcp_max_rounds: int = 3  # MCP工具调用最大轮数（全局统一控制）
@@ -183,6 +194,7 @@ EMBEDDING_DIMENSIONS = get_embedding_dimensions(
     settings.embedding_dimensions
 )
 config_logger.info(f"Embedding 配置: model={settings.embedding_model}, dimensions={EMBEDDING_DIMENSIONS}")
+config_logger.info(f"向量数据库: provider={settings.vector_db_provider}")
 
 
 # ==================== 提示词工坊实例标识 ====================

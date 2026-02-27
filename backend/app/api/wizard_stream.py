@@ -20,7 +20,7 @@ from app.services.prompt_service import prompt_service, PromptService
 from app.services.plot_expansion_service import PlotExpansionService
 from app.logger import get_logger
 from app.utils.sse_response import SSEResponse, create_sse_response, WizardProgressTracker
-from app.api.settings import get_user_ai_service
+from app.api.settings import get_user_ai_service, get_task_ai_service
 
 router = APIRouter(prefix="/wizard-stream", tags=["项目创建向导(流式)"])
 logger = get_logger(__name__)
@@ -273,17 +273,9 @@ async def world_building_generator(
         logger.info(f"✅ 世界观生成完成，项目ID: {project.id}")
         
     except GeneratorExit:
-        # SSE连接断开，回滚未提交的事务
-        logger.warning("世界构建生成器被提前关闭")
-        if not db_committed and db.in_transaction():
-            await db.rollback()
-            logger.info("世界构建事务已回滚（GeneratorExit）")
+        logger.warning("世界构建生成器被提前关闭（SSE断开）")
     except Exception as e:
         logger.error(f"世界构建流式生成失败: {str(e)}")
-        # 异常时回滚事务
-        if not db_committed and db.in_transaction():
-            await db.rollback()
-            logger.info("世界构建事务已回滚（异常）")
         yield await tracker.error(f"生成失败: {str(e)}")
 
 
@@ -547,15 +539,9 @@ async def career_system_generator(
                     return
         
     except GeneratorExit:
-        logger.warning("职业体系生成器被提前关闭")
-        if not db_committed and db.in_transaction():
-            await db.rollback()
-            logger.info("职业体系事务已回滚（GeneratorExit）")
+        logger.warning("职业体系生成器被提前关闭（SSE断开）")
     except Exception as e:
         logger.error(f"职业体系流式生成失败: {str(e)}")
-        if not db_committed and db.in_transaction():
-            await db.rollback()
-            logger.info("职业体系事务已回滚（异常）")
         yield await tracker.error(f"生成失败: {str(e)}")
 
 
@@ -1218,15 +1204,9 @@ async def characters_generator(
         yield await tracker.done()
         
     except GeneratorExit:
-        logger.warning("角色生成器被提前关闭")
-        if not db_committed and db.in_transaction():
-            await db.rollback()
-            logger.info("角色生成事务已回滚（GeneratorExit）")
+        logger.warning("角色生成器被提前关闭（SSE断开）")
     except Exception as e:
         logger.error(f"角色生成失败: {str(e)}")
-        if not db_committed and db.in_transaction():
-            await db.rollback()
-            logger.info("角色生成事务已回滚（异常）")
         yield await tracker.error(f"生成失败: {str(e)}")
 
 
@@ -1516,22 +1496,16 @@ async def outline_generator(
         yield await tracker.done()
         
     except GeneratorExit:
-        logger.warning("大纲生成器被提前关闭")
-        if not db_committed and db.in_transaction():
-            await db.rollback()
-            logger.info("大纲生成事务已回滚（GeneratorExit）")
+        logger.warning("大纲生成器被提前关闭（SSE断开）")
     except Exception as e:
         logger.error(f"大纲生成失败: {str(e)}")
-        if not db_committed and db.in_transaction():
-            await db.rollback()
-            logger.info("大纲生成事务已回滚（异常）")
         yield await tracker.error(f"生成失败: {str(e)}")
 
 @router.post("/outline", summary="流式生成完整大纲")
 async def generate_outline_stream(
     data: Dict[str, Any],
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_task_ai_service("outline"))
 ):
     """
     使用SSE流式生成完整大纲，避免超时
@@ -1711,15 +1685,9 @@ async def world_building_regenerate_generator(
         yield await tracker.done()
         
     except GeneratorExit:
-        logger.warning("世界观重新生成器被提前关闭")
-        if not db_committed and db.in_transaction():
-            await db.rollback()
-            logger.info("世界观重新生成事务已回滚（GeneratorExit）")
+        logger.warning("世界观重新生成器被提前关闭（SSE断开）")
     except Exception as e:
         logger.error(f"世界观重新生成失败: {str(e)}")
-        if not db_committed and db.in_transaction():
-            await db.rollback()
-            logger.info("世界观重新生成事务已回滚（异常）")
         yield await tracker.error(f"生成失败: {str(e)}")
 
 

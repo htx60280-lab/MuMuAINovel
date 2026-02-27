@@ -19,6 +19,8 @@ from app.models.chapter_memory import ChapterMemory
 from app.models.chapter import Chapter
 from app.models.project import Project
 from app.config import settings, EMBEDDING_DIMENSIONS
+from app.services.qdrant_service import QdrantService
+from qdrant_client.http import models as qdrant_models
 from app.logger import get_logger
 
 logger = get_logger(__name__)
@@ -53,6 +55,7 @@ class ChapterMemoryService:
         self.user_embedding_config = user_embedding_config or {}
         self._embedding_client: Optional[AsyncOpenAI] = None
         self._embedding_model: Optional[str] = None
+        self._qdrant_service: Optional[QdrantService] = None
 
     @property
     def embedding_model(self) -> str:
@@ -93,13 +96,19 @@ class ChapterMemoryService:
             config_source = "用户配置" if self.user_embedding_config.get("embedding_api_key") else (
                 "环境变量 EMBEDDING_API_KEY" if settings.embedding_api_key else "环境变量 OPENAI_API_KEY"
             )
-            logger.info(f"✅ pgvector Embedding 客户端初始化完成")
+            logger.info(f"✅ Embedding 客户端初始化完成")
             logger.info(f"   - 模型: {self.embedding_model}")
             logger.info(f"   - 维度: {EMBEDDING_DIMENSIONS}")
             logger.info(f"   - API地址: {base_url}")
             logger.info(f"   - 密钥来源: {config_source}")
 
         return self._embedding_client
+
+    @property
+    def qdrant_service(self) -> QdrantService:
+        if self._qdrant_service is None:
+            self._qdrant_service = QdrantService()
+        return self._qdrant_service
 
     async def _get_embedding(self, text: str) -> List[float]:
         """
@@ -191,8 +200,10 @@ class ChapterMemoryService:
                     result["state_change_log"] = state_change
                     # 保存状态变更到章节表（摘要和钩子立即同步，但状态变化暂存待确认）
                     await self._save_chapter_state_change(chapter_id, state_change)
-                    # 注意：不再自动调用 _patch_world_state，需要用户确认后才更新
-                    # await self._patch_world_state(project_id, state_change)
+                    # 自动更新世界状态（不再要求用户确认）
+                    world_state_updated = await self._patch_world_state(project_id, state_change)
+                    if not world_state_updated:
+                        logger.warning(f"⚠️ 自动更新世界状态失败: project_id={project_id[:8]}")
 
                     # 提取并保存关键事件
                     await self._extract_and_save_key_events(
@@ -328,6 +339,12 @@ class ChapterMemoryService:
             deleted = result.rowcount
             if deleted > 0:
                 logger.info(f"🗑️ 已删除章节旧切片: chapter_id={chapter_id[:8]}, 数量={deleted}")
+            if settings.vector_db_provider == "qdrant":
+                self.qdrant_service.delete_by_payload(
+                    collection="chapter_memories",
+                    key="chapter_id",
+                    value=chapter_id
+                )
             return deleted
         except Exception as e:
             logger.error(f"❌ 删除旧切片失败: {e}")
@@ -415,6 +432,8 @@ class ChapterMemoryService:
     ) -> int:
         """生成 embedding 并批量存储切片"""
         stored = 0
+        qdrant_points: List[qdrant_models.PointStruct] = []
+        use_qdrant = settings.vector_db_provider == "qdrant"
 
         for chunk in chunks:
             try:
@@ -436,15 +455,35 @@ class ChapterMemoryService:
                 self.db.add(memory)
                 await self.db.flush()
 
-                # 使用原生 SQL 更新 embedding
-                await self.db.execute(
-                    text("""
-                        UPDATE chapter_memories
-                        SET embedding = :embedding::vector
-                        WHERE id = :id
-                    """),
-                    {"id": memory.id, "embedding": str(embedding)}
-                )
+                if use_qdrant:
+                    qdrant_points.append(
+                        qdrant_models.PointStruct(
+                            id=memory.id,
+                            vector=embedding,
+                            payload={
+                                "project_id": project_id,
+                                "chapter_id": chapter_id,
+                                "chunk_index": chunk["chunk_index"],
+                                "memory_type": chunk["memory_type"],
+                                "characters": characters_mentioned or [],
+                                "importance": 0.5,
+                                "story_timeline": chapter_number,
+                                "content": chunk["content"],
+                            }
+                        )
+                    )
+                else:
+                    # 使用原生 SQL 更新 embedding (pgvector)
+                    embedding_literal = "[" + ",".join(str(v) for v in embedding) + "]"
+                    async with self.db.begin_nested():
+                        await self.db.execute(
+                            text("""
+                                UPDATE chapter_memories
+                                SET embedding = CAST(:embedding AS vector)
+                                WHERE id = :id
+                            """),
+                            {"id": memory.id, "embedding": embedding_literal}
+                        )
 
                 stored += 1
 
@@ -453,7 +492,28 @@ class ChapterMemoryService:
                 continue
 
         await self.db.commit()
+
+        if use_qdrant:
+            try:
+                await self._flush_qdrant_vectors(qdrant_points)
+            except Exception as e:
+                logger.error(f"❌ Qdrant 写入失败: {e}")
+
+        if use_qdrant:
+            logger.info("✅ 使用 Qdrant 完成向量存储")
+        else:
+            logger.info("✅ 使用 pgvector 完成向量存储")
+
         return stored
+
+    async def _flush_qdrant_vectors(
+        self,
+        points: List[qdrant_models.PointStruct]
+    ) -> None:
+        if not points:
+            return
+        self.qdrant_service.ensure_collection("chapter_memories", EMBEDDING_DIMENSIONS)
+        self.qdrant_service.upsert_vectors("chapter_memories", points)
 
     async def _extract_state_change(
         self,
@@ -517,13 +577,8 @@ class ChapterMemoryService:
             # 解析 JSON - response 是字典，实际内容在 content 字段
             response_text = response.get("content", "") if isinstance(response, dict) else str(response)
 
-            json_str = response_text
-            if "```json" in response_text:
-                json_str = response_text.split("```json")[1].split("```")[0]
-            elif "```" in response_text:
-                json_str = response_text.split("```")[1].split("```")[0]
-
-            state_change = json.loads(json_str.strip())
+            cleaned_json = self.ai_service._clean_json_response(response_text)
+            state_change = json.loads(cleaned_json)
             logger.info(f"✅ 状态变更提取完成: {state_change.get('summary', '')[:50]}")
             return state_change
 

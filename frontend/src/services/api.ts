@@ -49,6 +49,8 @@ import type {
   PresetCreateRequest,
   PresetUpdateRequest,
   PresetListResponse,
+  TaskChannelsResponse,
+  TaskChannelItem,
   ChapterPlanItem,
   BookImportTask,
   BookImportPreview,
@@ -297,6 +299,16 @@ export const settingsApi = {
     api.post<unknown, APIKeyPreset>('/settings/presets/from-current', null, {
       params: { name, description }
     }),
+
+  // 任务渠道管理
+  getTaskChannels: () =>
+    api.get<unknown, TaskChannelsResponse>('/settings/task-channels'),
+
+  updateTaskChannels: (channels: Record<string, TaskChannelItem>) =>
+    api.put<unknown, { message: string; channels: Record<string, TaskChannelItem> }>(
+      '/settings/task-channels',
+      { channels }
+    ),
 };
 
 export const projectApi = {
@@ -1228,18 +1240,6 @@ export const stateChangeApi = {
       success: boolean;
       message: string;
     }>(`/chapters/${chapterId}/reject-state`, {}),
-};
-
-// 章节审查 API
-export const reviewApi = {
-  reviewChapter: (chapterId: string, options?: { dimensions?: string[]; force_refresh?: boolean }) =>
-    api.post<unknown, import('../types').ReviewResult>(
-      `/review/chapter/${chapterId}`,
-      { dimensions: options?.dimensions, force_refresh: options?.force_refresh }
-    ),
-
-  getDimensions: () =>
-    api.get<unknown, { dimensions: import('../types').ReviewDimension[] }>('/review/dimensions'),
 };
 
 // 关键事件 API

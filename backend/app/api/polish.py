@@ -8,7 +8,7 @@ from app.schemas.polish import PolishRequest, PolishResponse
 from app.services.ai_service import AIService
 from app.services.prompt_service import prompt_service, PromptService
 from app.logger import get_logger
-from app.api.settings import get_user_ai_service
+from app.api.settings import get_task_ai_service
 
 router = APIRouter(prefix="/polish", tags=["AI去味"])
 logger = get_logger(__name__)
@@ -19,7 +19,7 @@ async def polish_text(
     request: PolishRequest,
     http_request: Request,
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_task_ai_service("polish"))
 ):
     """
     AI去味 - 将AI生成的文本改写得更像人类作家的手笔
@@ -94,7 +94,7 @@ async def polish_batch(
     model: str = None,
     http_request: Request = None,
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_task_ai_service("polish"))
 ):
     """
     批量处理多个文本的AI去味

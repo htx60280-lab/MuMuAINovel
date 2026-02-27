@@ -400,6 +400,25 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
                       />
                     </Col>
                   </Row>
+                  {/* CriticAgent 维度（仅在有数据时展示） */}
+                  {(analysis_data.ooc_score > 0 || analysis_data.consistency_score > 0 || analysis_data.three_line_rhythm_score > 0) && (
+                    <>
+                      <div style={{ borderTop: '1px solid #f0f0f0', margin: '12px 0 16px', paddingTop: 12 }}>
+                        <span style={{ fontSize: 13, color: '#999' }}>质量审查</span>
+                      </div>
+                      <Row gutter={isMobile ? 8 : 16}>
+                        <Col span={isMobile ? 12 : 8}>
+                          <Statistic title="角色一致性" value={analysis_data.ooc_score || 0} suffix="/ 100" />
+                        </Col>
+                        <Col span={isMobile ? 12 : 8}>
+                          <Statistic title="设定一致性" value={analysis_data.consistency_score || 0} suffix="/ 100" />
+                        </Col>
+                        <Col span={isMobile ? 24 : 8}>
+                          <Statistic title="三线节奏" value={analysis_data.three_line_rhythm_score || 0} suffix="/ 100" />
+                        </Col>
+                      </Row>
+                    </>
+                  )}
                 </Card>
 
                 {analysis_data.analysis_report && (

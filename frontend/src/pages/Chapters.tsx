@@ -4,7 +4,7 @@ import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, Down
 import { useStore } from '../store';
 import { useChapterSync } from '../store/hooks';
 import { projectApi, writingStyleApi, chapterApi, stateChangeApi } from '../services/api';
-import type { Chapter, ChapterUpdate, ApiError, WritingStyle, AnalysisTask, ExpansionPlanData, ReviewResult } from '../types';
+import type { Chapter, ChapterUpdate, ApiError, WritingStyle, AnalysisTask, ExpansionPlanData } from '../types';
 import type { TextAreaRef } from 'antd/es/input/TextArea';
 import ChapterAnalysis from '../components/ChapterAnalysis';
 import ExpansionPlanEditor from '../components/ExpansionPlanEditor';
@@ -13,7 +13,7 @@ import { SSEProgressModal } from '../components/SSEProgressModal';
 import ChapterReader from '../components/ChapterReader';
 import PartialRegenerateToolbar from '../components/PartialRegenerateToolbar';
 import PartialRegenerateModal from '../components/PartialRegenerateModal';
-import ChapterReviewModal from '../components/ChapterReviewModal';
+
 import StateChangeConfirmModal from '../components/StateChangeConfirmModal';
 
 const { TextArea } = Input;
@@ -101,11 +101,6 @@ export default function Chapters() {
   const [selectionStartPosition, setSelectionStartPosition] = useState(0);
   const [selectionEndPosition, setSelectionEndPosition] = useState(0);
   const [partialRegenerateModalVisible, setPartialRegenerateModalVisible] = useState(false);
-
-  // AI深度审查状态
-  const [reviewModalVisible, setReviewModalVisible] = useState(false);
-  const [reviewChapterId, setReviewChapterId] = useState<string | null>(null);
-  const [reviewCachedResult, setReviewCachedResult] = useState<ReviewResult | null>(null);
 
   // 状态变化确认弹窗状态
   const [stateConfirmModalVisible, setStateConfirmModalVisible] = useState(false);
@@ -831,11 +826,54 @@ export default function Chapters() {
   };
 
   const canGenerateChapter = (chapter: Chapter): boolean => {
-    return chapterGenerateGateMap[chapter.id]?.canGenerate ?? true;
+    if (chapter.chapter_number === 1) {
+      return true;
+    }
+
+    const previousChapters = chapters.filter(
+      c => c.chapter_number < chapter.chapter_number
+    );
+
+    // 只检查所有前置章节是否有内容（与后端 check_prerequisites 一致）
+    // 分析状态不阻塞生成，仅在生成前给出提示
+    return previousChapters.every(c => c.content && c.content.trim() !== '');
+  };
+
+  /** 检查前置章节是否有未完成的分析（用于生成前提示，不阻塞） */
+  const getUnanalyzedWarning = (chapter: Chapter): string => {
+    if (chapter.chapter_number === 1) return '';
+    const previousChapters = chapters.filter(
+      c => c.chapter_number < chapter.chapter_number
+    );
+    const unanalyzed = previousChapters.filter(c => {
+      const task = analysisTasksMap[c.id];
+      return !task || !task.has_task || task.status !== 'completed';
+    });
+    if (unanalyzed.length === 0) return '';
+    const numbers = unanalyzed.map(c => c.chapter_number).join('、');
+    return `前置章节（第 ${numbers} 章）尚未完成分析，生成质量可能受影响`;
   };
 
   const getGenerateDisabledReason = (chapter: Chapter): string => {
-    return chapterGenerateGateMap[chapter.id]?.reason || '';
+    if (chapter.chapter_number === 1) {
+      return '';
+    }
+
+    const previousChapters = chapters.filter(
+      c => c.chapter_number < chapter.chapter_number
+    );
+
+    // 只检查是否有未完成内容的章节（与后端一致）
+    const incompleteChapters = previousChapters.filter(
+      c => !c.content || c.content.trim() === ''
+    );
+
+    if (incompleteChapters.length > 0) {
+      const numbers = incompleteChapters.map(c => c.chapter_number).join('、');
+      return `需要先完成前置章节：第 ${numbers} 章`;
+    }
+
+    return '';
   };
 
   const handleOpenModal = (id: string) => {
@@ -965,6 +1003,12 @@ export default function Chapters() {
     ).sort((a, b) => a.chapter_number - b.chapter_number);
 
     const selectedStyle = writingStyles.find(s => s.id === selectedStyleId);
+
+    // 分析未完成提示（不阻塞，仅警告）
+    const analysisWarning = getUnanalyzedWarning(chapter);
+    if (analysisWarning) {
+      message.warning(analysisWarning);
+    }
 
     const instance = modal.confirm({
       title: 'AI创作章节内容',
@@ -1939,12 +1983,6 @@ export default function Chapters() {
     setPartialRegenerateModalVisible(true);
   };
 
-  // 打开AI深度审查弹窗
-  const handleOpenReview = (chapter: Chapter) => {
-    setReviewChapterId(chapter.id);
-    setReviewCachedResult(chapter.review_result || null);
-    setReviewModalVisible(true);
-  };
 
   const hasPendingStateChange = (
     pendingStateChange: Chapter['pending_state_change'] | null | undefined
@@ -2205,16 +2243,6 @@ export default function Chapters() {
                       </Button>
                     );
                   })(),
-                  // AI深度审查按钮
-                  <Button
-                    type="text"
-                    icon={<AuditOutlined />}
-                    onClick={() => handleOpenReview(item)}
-                    disabled={!item.content || item.content.trim() === ''}
-                    title={!item.content || item.content.trim() === '' ? '请先生成章节内容' : 'AI深度审查'}
-                  >
-                    审查
-                  </Button>,
                   <Button
                     type="text"
                     icon={<SettingOutlined />}
@@ -2428,16 +2456,6 @@ export default function Chapters() {
                             </Button>
                           );
                         })(),
-                        // AI深度审查按钮
-                        <Button
-                          type="text"
-                          icon={<AuditOutlined />}
-                          onClick={() => handleOpenReview(item)}
-                          disabled={!item.content || item.content.trim() === ''}
-                          title={!item.content || item.content.trim() === '' ? '请先生成章节内容' : 'AI深度审查'}
-                        >
-                          审查
-                        </Button>,
                         <Button
                           type="text"
                           icon={<SettingOutlined />}
@@ -2766,7 +2784,7 @@ export default function Chapters() {
                     icon={canGenerate ? <ThunderboltOutlined /> : <LockOutlined />}
                     onClick={() => currentChapter && showGenerateModal(currentChapter)}
                     loading={isContinuing}
-                    disabled={!canGenerate}
+                    disabled={!canGenerate || isGenerating}
                     danger={!canGenerate}
                     style={{ fontWeight: 'bold' }}
                     title={!canGenerate ? disabledReason : '根据大纲和前置章节内容创作'}
@@ -3274,20 +3292,6 @@ export default function Chapters() {
           />
         );
       })()}
-
-      {/* AI深度审查弹窗 */}
-      {reviewChapterId && (
-        <ChapterReviewModal
-          visible={reviewModalVisible}
-          chapterId={reviewChapterId}
-          cachedResult={reviewCachedResult}
-          onClose={() => {
-            setReviewModalVisible(false);
-            setReviewChapterId(null);
-            setReviewCachedResult(null);
-          }}
-        />
-      )}
 
       {/* 状态变化确认弹窗 */}
       {stateConfirmChapter && (

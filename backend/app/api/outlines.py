@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, delete
 from typing import List, AsyncGenerator, Dict, Any
+import asyncio
 import json
 
 from app.database import get_db
@@ -33,7 +34,7 @@ from app.services.plot_expansion_service import PlotExpansionService
 from app.services.foreshadow_service import foreshadow_service
 from app.services.memory_service import memory_service
 from app.logger import get_logger
-from app.api.settings import get_user_ai_service
+from app.api.settings import get_user_ai_service, get_task_ai_service
 from app.utils.sse_response import SSEResponse, create_sse_response, WizardProgressTracker
 
 router = APIRouter(prefix="/outlines", tags=["大纲管理"])
@@ -151,9 +152,11 @@ async def get_outlines(
                 outline.title = f"第{outline.order_index}章"
                 outline.content = "解析失败"
         else:
-            # 没有structure的异常情况
-            outline.title = f"第{outline.order_index}章"
-            outline.content = "暂无内容"
+            # 没有structure时，保留已有的title和content（如导入数据）
+            if not outline.title:
+                outline.title = f"第{outline.order_index}章"
+            if not outline.content:
+                outline.content = "暂无内容"
 
     return OutlineListResponse(total=total, items=outlines)
 
@@ -166,6 +169,67 @@ async def get_project_outlines(
 ):
     """获取指定项目的所有大纲（路径参数版本，兼容旧API）"""
     return await get_outlines(project_id, request, db)
+
+
+@router.post("/fix-missing-chapters/{project_id}", summary="修复one-to-one模式缺失的章节")
+async def fix_missing_chapters(
+    project_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    为one-to-one模式的项目补建缺失的章节记录，并重算项目字数。
+    只为没有对应章节的大纲创建新章节，不影响已有章节。
+    """
+    user_id = getattr(request.state, 'user_id', None)
+    project = await verify_project_access(project_id, user_id, db)
+
+    if project.outline_mode != 'one-to-one':
+        raise HTTPException(status_code=400, detail="此接口仅适用于传统模式(one-to-one)项目")
+
+    outlines_result = await db.execute(
+        select(Outline).where(Outline.project_id == project_id).order_by(Outline.order_index)
+    )
+    outlines = outlines_result.scalars().all()
+
+    chapters_result = await db.execute(
+        select(Chapter.chapter_number).where(Chapter.project_id == project_id)
+    )
+    existing_numbers = {row[0] for row in chapters_result.all()}
+
+    created = 0
+    for outline in outlines:
+        if outline.order_index not in existing_numbers:
+            chapter = Chapter(
+                project_id=project_id,
+                title=outline.title or f"第{outline.order_index}章",
+                summary=outline.content,
+                chapter_number=outline.order_index,
+                sub_index=1,
+                outline_id=None,
+                status='pending',
+                content=""
+            )
+            db.add(chapter)
+            created += 1
+
+    # 重算项目总字数
+    all_chapters_result = await db.execute(
+        select(func.sum(Chapter.word_count)).where(Chapter.project_id == project_id)
+    )
+    total_words = all_chapters_result.scalar_one() or 0
+    old_words = project.current_words
+    project.current_words = total_words
+
+    await db.commit()
+    logger.info(f"修复项目 {project_id}：补建了 {created} 个缺失章节，字数 {old_words} → {total_words}")
+
+    return {
+        "message": f"修复完成，补建了 {created} 个章节，字数已更新为 {total_words}",
+        "created": created,
+        "total_outlines": len(outlines),
+        "current_words": total_words
+    }
 
 
 @router.get("/{outline_id}", response_model=OutlineResponse, summary="获取大纲详情")
@@ -433,8 +497,6 @@ async def delete_outline(
         "deleted_chapters": deleted_chapters_count,
         "deleted_foreshadows": deleted_foreshadow_count
     }
-
-
 
 
 async def _build_outline_continue_context(
@@ -1307,15 +1369,9 @@ async def new_outline_generator(
         yield await tracker.done()
         
     except GeneratorExit:
-        logger.warning("大纲生成器被提前关闭")
-        if not db_committed and db.in_transaction():
-            await db.rollback()
-            logger.info("大纲生成事务已回滚（GeneratorExit）")
+        logger.warning("大纲生成器被提前关闭（SSE断开）")
     except Exception as e:
         logger.error(f"大纲生成失败: {str(e)}")
-        if not db_committed and db.in_transaction():
-            await db.rollback()
-            logger.info("大纲生成事务已回滚（异常）")
         yield await tracker.error(f"生成失败: {str(e)}")
 
 
@@ -1677,15 +1733,9 @@ async def continue_outline_generator(
         yield await tracker.done()
         
     except GeneratorExit:
-        logger.warning("大纲续写生成器被提前关闭")
-        if not db_committed and db.in_transaction():
-            await db.rollback()
-            logger.info("大纲续写事务已回滚（GeneratorExit）")
+        logger.warning("大纲续写生成器被提前关闭（SSE断开）")
     except Exception as e:
         logger.error(f"大纲续写失败: {str(e)}")
-        if not db_committed and db.in_transaction():
-            await db.rollback()
-            logger.info("大纲续写事务已回滚（异常）")
         yield await tracker.error(f"续写失败: {str(e)}")
 
 
@@ -1694,7 +1744,7 @@ async def generate_outline_stream(
     data: Dict[str, Any],
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_task_ai_service("outline"))
 ):
     """
     使用SSE流式生成或续写小说大纲，实时推送批次进度
@@ -1820,18 +1870,28 @@ async def expand_outline_generator(
                 message="🤖 AI分析大纲，生成章节规划..."
             )
         
-        chapter_plans = await expansion_service.analyze_outline_for_chapters(
-            outline=outline,
-            project=project,
-            db=db,
-            target_chapter_count=target_chapter_count,
-            expansion_strategy=expansion_strategy,
-            enable_scene_analysis=enable_scene_analysis,
-            provider=data.get("provider"),
-            model=data.get("model"),
-            batch_size=batch_size,
-            progress_callback=None  # SSE中暂不支持嵌套回调
+        analysis_task = asyncio.create_task(
+            expansion_service.analyze_outline_for_chapters(
+                outline=outline,
+                project=project,
+                db=db,
+                target_chapter_count=target_chapter_count,
+                expansion_strategy=expansion_strategy,
+                enable_scene_analysis=enable_scene_analysis,
+                provider=data.get("provider"),
+                model=data.get("model"),
+                batch_size=batch_size,
+                progress_callback=None  # SSE中暂不支持嵌套回调
+            )
         )
+
+        while True:
+            done, _ = await asyncio.wait({analysis_task}, timeout=10)
+            if done:
+                break
+            yield await tracker.heartbeat()
+
+        chapter_plans = await analysis_task
         
         if not chapter_plans:
             yield await tracker.error("AI分析失败，未能生成章节规划", 500)
@@ -1894,15 +1954,9 @@ async def expand_outline_generator(
         yield await tracker.done()
         
     except GeneratorExit:
-        logger.warning("大纲展开生成器被提前关闭")
-        if not db_committed and db.in_transaction():
-            await db.rollback()
-            logger.info("大纲展开事务已回滚（GeneratorExit）")
+        logger.warning("大纲展开生成器被提前关闭（SSE断开）")
     except Exception as e:
         logger.error(f"大纲展开失败: {str(e)}")
-        if not db_committed and db.in_transaction():
-            await db.rollback()
-            logger.info("大纲展开事务已回滚（异常）")
         yield await tracker.error(f"展开失败: {str(e)}")
 
 
@@ -2010,7 +2064,7 @@ async def expand_outline_to_chapters_stream(
     data: Dict[str, Any],
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_task_ai_service("outline"))
 ):
     """
     使用SSE流式展开单个大纲，实时推送进度
@@ -2236,16 +2290,26 @@ async def batch_expand_outlines_generator(
                     message=f"🤖 AI分析大纲: {outline.title}"
                 )
                 
-                chapter_plans = await expansion_service.analyze_outline_for_chapters(
-                    outline=outline,
-                    project=project,
-                    db=db,
-                    target_chapter_count=chapters_per_outline,
-                    expansion_strategy=expansion_strategy,
-                    enable_scene_analysis=data.get("enable_scene_analysis", True),
-                    provider=data.get("provider"),
-                    model=data.get("model")
+                analysis_task = asyncio.create_task(
+                    expansion_service.analyze_outline_for_chapters(
+                        outline=outline,
+                        project=project,
+                        db=db,
+                        target_chapter_count=chapters_per_outline,
+                        expansion_strategy=expansion_strategy,
+                        enable_scene_analysis=data.get("enable_scene_analysis", True),
+                        provider=data.get("provider"),
+                        model=data.get("model")
+                    )
                 )
+
+                while True:
+                    done, _ = await asyncio.wait({analysis_task}, timeout=10)
+                    if done:
+                        break
+                    yield await tracker.heartbeat()
+
+                chapter_plans = await analysis_task
                 
                 yield await tracker.generating(
                     current_chars=(idx + 0.5) * chapters_per_outline * 500,
@@ -2344,15 +2408,9 @@ async def batch_expand_outlines_generator(
         yield await tracker.done()
         
     except GeneratorExit:
-        logger.warning("批量展开生成器被提前关闭")
-        if not db_committed and db.in_transaction():
-            await db.rollback()
-            logger.info("批量展开事务已回滚（GeneratorExit）")
+        logger.warning("批量展开生成器被提前关闭（SSE断开）")
     except Exception as e:
         logger.error(f"批量展开失败: {str(e)}")
-        if not db_committed and db.in_transaction():
-            await db.rollback()
-            logger.info("批量展开事务已回滚（异常）")
         yield await SSEResponse.send_error(f"批量展开失败: {str(e)}")
 
 
@@ -2361,7 +2419,7 @@ async def batch_expand_outlines_stream(
     data: Dict[str, Any],
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_task_ai_service("outline"))
 ):
     """
     使用SSE流式批量展开大纲，实时推送每个大纲的处理进度

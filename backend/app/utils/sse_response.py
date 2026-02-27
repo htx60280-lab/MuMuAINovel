@@ -388,31 +388,73 @@ async def create_sse_generator(
         yield await SSEResponse.send_error(str(e))
 
 
-def create_sse_response(generator: AsyncGenerator[str, None]) -> StreamingResponse:
+def create_sse_response(
+    generator: AsyncGenerator[str, None],
+    heartbeat_interval: float = 15.0
+) -> StreamingResponse:
     """
     创建SSE StreamingResponse - 兼容HTTP/2协议
-    
+
+    内置自动心跳机制：在业务生成器空闲期间，每隔 heartbeat_interval 秒
+    自动发送 SSE 注释心跳（`: heartbeat\\n\\n`），防止 Cloudflare Tunnel
+    等反向代理因空闲超时断开连接。
+
     Args:
         generator: SSE消息生成器
-        
+        heartbeat_interval: 心跳间隔秒数，默认15秒
+
     Returns:
         StreamingResponse对象
-    
-    注意：
-    - HTTP/2不支持Connection头，已移除
-    - 明确指定charset=utf-8以确保编码正确
-    - 添加CORS头以支持跨域请求
     """
     async def wrapper():
-        """包装生成器以捕获StreamingResponse初始化时的GeneratorExit"""
+        """包装生成器，在空闲时自动发送心跳保活"""
+        queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+        done = False
+
+        async def producer():
+            """从业务生成器读取数据放入队列"""
+            nonlocal done
+            try:
+                async for chunk in generator:
+                    await queue.put(chunk)
+            except GeneratorExit:
+                pass
+            except Exception as e:
+                logger.error(f"SSE生成器异常: {e}")
+                try:
+                    error_msg = await SSEResponse.send_error(str(e))
+                    await queue.put(error_msg)
+                except Exception:
+                    pass
+            finally:
+                done = True
+                await queue.put(None)  # 哨兵值，通知消费者结束
+
+        producer_task = asyncio.create_task(producer())
         try:
-            async for chunk in generator:
-                yield chunk
+            while True:
+                try:
+                    item = await asyncio.wait_for(
+                        queue.get(), timeout=heartbeat_interval
+                    )
+                except asyncio.TimeoutError:
+                    # 超时未收到数据，发送心跳保活
+                    yield ": heartbeat\n\n"
+                    continue
+
+                if item is None:
+                    # 生成器结束
+                    break
+                yield item
         except GeneratorExit:
-            # StreamingResponse在初始化时会进行类型检查，导致GeneratorExit
-            # 这是正常行为，不需要记录警告
             pass
-    
+        finally:
+            producer_task.cancel()
+            try:
+                await producer_task
+            except (asyncio.CancelledError, Exception):
+                pass
+
     return StreamingResponse(
         wrapper(),
         media_type="text/event-stream; charset=utf-8",  # 明确指定charset
