@@ -629,6 +629,7 @@ async def get_project_chapters(
             "end_hook": chapter.end_hook,
             "review_result": chapter.review_result,
             "pending_state_change": chapter.pending_state_change,
+            "state_change_log": chapter.state_change_log,
             "created_at": chapter.created_at,
             "updated_at": chapter.updated_at,
         }

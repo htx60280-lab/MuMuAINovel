@@ -51,7 +51,8 @@
       "Bash(cd E:\\\\github\\\\NovelForge\\\\backend:*)",
       "Bash(cd E:\\\\github\\\\NovelForge:*)",
       "Bash(grep:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(docker restart:*)"
     ]
   }
 }
