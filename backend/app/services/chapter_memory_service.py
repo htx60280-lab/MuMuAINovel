@@ -200,10 +200,10 @@ class ChapterMemoryService:
                     result["state_change_log"] = state_change
                     # 保存状态变更到章节表（摘要和钩子立即同步，但状态变化暂存待确认）
                     await self._save_chapter_state_change(chapter_id, state_change)
-                    # 自动更新世界状态（不再要求用户确认）
-                    world_state_updated = await self._patch_world_state(project_id, state_change)
+                    # 从所有章节重建世界状态（避免重写旧章节时状态回退）
+                    world_state_updated = await self._rebuild_world_state_from_chapters(project_id)
                     if not world_state_updated:
-                        logger.warning(f"⚠️ 自动更新世界状态失败: project_id={project_id[:8]}")
+                        logger.warning(f"⚠️ 重建世界状态失败: project_id={project_id[:8]}")
 
                     # 提取并保存关键事件
                     await self._extract_and_save_key_events(
@@ -232,7 +232,7 @@ class ChapterMemoryService:
         """
         将状态变更保存到章节表的 state_change_log 字段，
         同时同步 summary 和 end_hook 字段。
-        状态变化（物品、位置等）暂存到 pending_state_change 待用户确认。
+        状态变化直接生效，不再需要用户确认。
 
         Args:
             chapter_id: 章节ID
@@ -257,7 +257,7 @@ class ChapterMemoryService:
 
             chapter.state_change_log = state_change
 
-            # 同步摘要到 chapter.summary（摘要直接同步，无需确认）
+            # 同步摘要到 chapter.summary
             summary = state_change.get("summary")
             if isinstance(summary, str) and summary:
                 chapter.summary = summary
@@ -265,7 +265,7 @@ class ChapterMemoryService:
             elif summary is not None and not isinstance(summary, str):
                 logger.warning(f"⚠️ summary 类型错误: {type(summary).__name__}")
 
-            # 同步钩子到 chapter.end_hook（钩子直接同步，无需确认）
+            # 同步钩子到 chapter.end_hook
             end_hook = state_change.get("end_hook")
             if isinstance(end_hook, dict) and end_hook:
                 chapter.end_hook = end_hook
@@ -275,53 +275,12 @@ class ChapterMemoryService:
             elif end_hook is not None and not isinstance(end_hook, dict):
                 logger.warning(f"⚠️ end_hook 类型错误: {type(end_hook).__name__}")
 
-            # 状态变化暂存到 pending_state_change（需要用户确认）
-            pending_changes = {}
-            location_change = state_change.get("location_change")
-            if isinstance(location_change, dict) and location_change.get("to"):
-                pending_changes["location_change"] = location_change
-            elif location_change is not None and not isinstance(location_change, dict):
-                logger.warning(f"⚠️ location_change 类型错误: {type(location_change).__name__}")
-
-            items_gained = state_change.get("items_gained")
-            if isinstance(items_gained, list) and items_gained:
-                pending_changes["items_gained"] = items_gained
-            elif items_gained is not None and not isinstance(items_gained, list):
-                logger.warning(f"⚠️ items_gained 类型错误: {type(items_gained).__name__}")
-
-            items_lost = state_change.get("items_lost")
-            if isinstance(items_lost, list) and items_lost:
-                pending_changes["items_lost"] = items_lost
-            elif items_lost is not None and not isinstance(items_lost, list):
-                logger.warning(f"⚠️ items_lost 类型错误: {type(items_lost).__name__}")
-
-            status_changes = state_change.get("status_changes")
-            if isinstance(status_changes, dict) and status_changes:
-                pending_changes["status_changes"] = status_changes
-            elif status_changes is not None and not isinstance(status_changes, dict):
-                logger.warning(f"⚠️ status_changes 类型错误: {type(status_changes).__name__}")
-
-            relationships = state_change.get("relationships")
-            if isinstance(relationships, dict) and relationships:
-                pending_changes["relationships"] = relationships
-            elif relationships is not None and not isinstance(relationships, dict):
-                logger.warning(f"⚠️ relationships 类型错误: {type(relationships).__name__}")
-
-            time_passed = state_change.get("time_passed")
-            if isinstance(time_passed, str) and time_passed.strip():
-                pending_changes["time_passed"] = time_passed
-            elif time_passed is not None and not isinstance(time_passed, str):
-                logger.warning(f"⚠️ time_passed 类型错误: {type(time_passed).__name__}")
-
-            if pending_changes:
-                chapter.pending_state_change = pending_changes
-                logger.info(f"⏳ 状态变化已暂存待确认: {list(pending_changes.keys())}")
-            else:
-                chapter.pending_state_change = None
+            # 清除待确认状态（不再使用）
+            chapter.pending_state_change = None
 
             await self.db.commit()
 
-            logger.info(f"✅ 状态变更已保存到章节: chapter_id={chapter_id[:8]}")
+            logger.info(f"✅ 状态变更已保存并自动生效: chapter_id={chapter_id[:8]}")
             return True
 
         except Exception as e:
@@ -563,7 +522,8 @@ class ChapterMemoryService:
 注意：
 - 只记录**明确发生**的变化，不要推测
 - 如果某项没有变化，使用空值或空数组
-- status_changes 中的数值变化用正负数表示
+- status_changes 中的数值变化用正负数表示（如 hp: -20, 经验值: +100）
+- **境界类属性**（修为、境界、职位、身份等）请使用**当前绝对值**而非增量（如 "修为": "筑基期" 而非 "修为": 1）
 - end_hook 描述章节结尾留下的期待/悬念
 - must_respond_next=true 表示下章开头必须回应
 - 如果章节结尾没有明显钩子，end_hook 可以为 null"""
@@ -571,19 +531,31 @@ class ChapterMemoryService:
             response = await self.ai_service.generate_text(
                 prompt=prompt,
                 system_prompt="你是一个精确的小说状态追踪器，只输出 JSON 格式的状态变更记录。",
-                max_tokens=1000
+                max_tokens=4000
             )
 
             # 解析 JSON - response 是字典，实际内容在 content 字段
             response_text = response.get("content", "") if isinstance(response, dict) else str(response)
 
+            # 检查响应是否为空
+            if not response_text or not response_text.strip():
+                logger.warning("⚠️ AI 返回的状态变更内容为空")
+                return None
+
             cleaned_json = self.ai_service._clean_json_response(response_text)
+
+            # 再次检查清洗后的内容
+            if not cleaned_json or not cleaned_json.strip():
+                logger.warning("⚠️ 清洗后的 JSON 内容为空")
+                return None
+
             state_change = json.loads(cleaned_json)
             logger.info(f"✅ 状态变更提取完成: {state_change.get('summary', '')[:50]}")
             return state_change
 
         except json.JSONDecodeError as e:
             logger.warning(f"⚠️ 状态变更 JSON 解析失败: {e}")
+            logger.debug(f"   原始响应: {response_text[:200] if response_text else 'None'}")
             return None
         except Exception as e:
             logger.error(f"❌ 状态变更提取失败: {e}")
@@ -615,8 +587,9 @@ class ChapterMemoryService:
                 logger.warning(f"⚠️ 项目不存在: {project_id}")
                 return False
 
-            # 获取当前状态
-            current_state = project.world_state or {}
+            # 深拷贝当前状态，避免 SQLAlchemy JSON 列就地修改不触发 dirty 检测
+            import copy
+            current_state = copy.deepcopy(project.world_state) if project.world_state else {}
 
             # 合并位置变更
             if state_change.get("location_change", {}).get("to"):
@@ -648,7 +621,7 @@ class ChapterMemoryService:
             if state_change.get("time_passed"):
                 current_state["last_time_reference"] = state_change["time_passed"]
 
-            # 保存更新
+            # 赋值新对象，确保 SQLAlchemy 检测到变化
             project.world_state = current_state
             await self.db.commit()
 
@@ -657,6 +630,176 @@ class ChapterMemoryService:
 
         except Exception as e:
             logger.error(f"❌ 全局状态更新失败: {e}")
+            await self.db.rollback()
+            return False
+
+    async def _rebuild_world_state_from_chapters(
+        self,
+        project_id: str
+    ) -> bool:
+        """
+        从所有章节的 state_change_log 按章节序号重建全局世界状态。
+
+        与 _patch_world_state 的增量合并不同，此方法从空 dict 开始，
+        按 chapter_number 升序 replay 每章的 state_change_log，
+        确保重写/修改旧章节后世界状态不会回退。
+
+        **重要**：重建时会保留用户手动添加的自定义字段（非标准字段）。
+
+        Args:
+            project_id: 项目ID
+
+        Returns:
+            是否重建成功
+        """
+        try:
+            import copy
+
+            # 获取项目
+            result = await self.db.execute(
+                select(Project).where(Project.id == project_id)
+            )
+            project = result.scalar_one_or_none()
+            if not project:
+                logger.warning(f"⚠️ 项目不存在: {project_id}")
+                return False
+
+            # 保存当前世界状态中的用户自定义字段
+            # 标准字段由章节状态重建，自定义字段保留
+            standard_fields = {
+                "current_location", "inventory", "relationships",
+                "status_changes", "last_time_reference"
+            }
+            old_state = project.world_state if isinstance(project.world_state, dict) else {}
+
+            # 收集所有章节中出现过的 status_changes 键（这些会被重建）
+            chapter_status_keys = set()
+            result_temp = await self.db.execute(
+                select(Chapter)
+                .where(
+                    Chapter.project_id == project_id,
+                    Chapter.state_change_log.isnot(None)
+                )
+            )
+            for ch in result_temp.scalars().all():
+                if isinstance(ch.state_change_log, dict):
+                    status_changes = ch.state_change_log.get("status_changes", {})
+                    if isinstance(status_changes, dict):
+                        chapter_status_keys.update(status_changes.keys())
+
+            # 保存用户自定义字段：
+            # 1. 顶层非标准字段
+            # 2. 不在章节 status_changes 中出现过的字段（用户手动添加的状态）
+            custom_fields = {}
+            for k, v in old_state.items():
+                if k not in standard_fields and k not in chapter_status_keys:
+                    custom_fields[k] = v
+
+            # 保存 status_changes 中的自定义字段
+            old_status_changes = old_state.get("status_changes", {})
+            custom_status_fields = {}
+            if isinstance(old_status_changes, dict):
+                custom_status_fields = {k: v for k, v in old_status_changes.items() if k not in chapter_status_keys}
+
+            # 查询所有有 state_change_log 的章节，按 chapter_number 升序
+            result = await self.db.execute(
+                select(Chapter)
+                .where(
+                    Chapter.project_id == project_id,
+                    Chapter.state_change_log.isnot(None)
+                )
+                .order_by(Chapter.chapter_number.asc())
+            )
+            chapters = result.scalars().all()
+
+            # 从空状态开始 replay
+            current_state: Dict[str, Any] = {}
+
+            for chapter in chapters:
+                state_change = chapter.state_change_log
+                if not isinstance(state_change, dict):
+                    continue
+
+                # 合并位置变更
+                if state_change.get("location_change", {}).get("to"):
+                    current_state["current_location"] = state_change["location_change"]["to"]
+
+                # 合并物品变更
+                inventory = current_state.get("inventory", [])
+                for item in state_change.get("items_gained", []):
+                    if item not in inventory:
+                        inventory.append(item)
+                for item in state_change.get("items_lost", []):
+                    if item in inventory:
+                        inventory.remove(item)
+                current_state["inventory"] = inventory
+
+                # 合并状态变更
+                # 定义绝对状态字段（这些字段使用最新值替换，而非累加）
+                absolute_state_fields = {
+                    "修为", "境界", "cultivation_level", "realm", "stage",
+                    "职位", "position", "title", "rank", "grade",
+                    "身份", "identity", "status", "role"
+                }
+
+                status_changes_dict = {}
+                for key, value in state_change.get("status_changes", {}).items():
+                    # 检查是否为绝对状态字段（使用最新值替换）
+                    is_absolute = any(field in key.lower() for field in absolute_state_fields)
+
+                    if isinstance(value, (int, float)) and not is_absolute:
+                        # 数值型且非绝对状态：累加（如 hp、经验值等）
+                        current_state[key] = current_state.get(key, 0) + value
+                    else:
+                        # 字符串型或绝对状态：直接替换（如修为境界、职位等）
+                        current_state[key] = value
+
+                    # 同时记录到 status_changes 字典中（用于前端显示）
+                    status_changes_dict[key] = current_state[key]
+
+                # 更新 status_changes 字段（合并而非替换）
+                if status_changes_dict:
+                    if "status_changes" not in current_state:
+                        current_state["status_changes"] = {}
+                    current_state["status_changes"].update(status_changes_dict)
+
+                # 合并关系变更
+                relationships = current_state.get("relationships", {})
+                relationships.update(state_change.get("relationships", {}))
+                current_state["relationships"] = relationships
+
+                # 更新时间
+                if state_change.get("time_passed"):
+                    current_state["last_time_reference"] = state_change["time_passed"]
+
+            # 合并用户自定义字段（保留用户手动编辑的内容）
+            # 1. 顶层自定义字段
+            current_state.update(custom_fields)
+
+            # 2. status_changes 中的自定义字段
+            if custom_status_fields:
+                if "status_changes" not in current_state:
+                    current_state["status_changes"] = {}
+                elif not isinstance(current_state["status_changes"], dict):
+                    current_state["status_changes"] = {}
+                current_state["status_changes"].update(custom_status_fields)
+
+                # 同时将自定义状态字段也写入顶层（保持数据结构一致性）
+                current_state.update(custom_status_fields)
+
+            # 赋值新对象，确保 SQLAlchemy 检测到变化
+            project.world_state = current_state
+            await self.db.commit()
+
+            custom_count = len(custom_fields) + len(custom_status_fields)
+            logger.info(
+                f"✅ 全局状态已重建: project_id={project_id[:8]}, "
+                f"replay {len(chapters)} 章, 保留 {custom_count} 个自定义字段"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ 全局状态重建失败: {e}")
             await self.db.rollback()
             return False
 
@@ -829,7 +972,7 @@ class ChapterMemoryService:
             response = await self.ai_service.generate_text(
                 prompt=prompt,
                 system_prompt="你是一个小说关键事件提取器，只输出JSON数组。",
-                max_tokens=800
+                max_tokens=2000
             )
 
             response_text = response.get("content", "") if isinstance(response, dict) else str(response)
@@ -930,11 +1073,26 @@ class ChapterMemoryService:
                 logger.warning("⚠️ confirmed_changes 不是 pending_state_change 子集")
                 return False
 
-            # 更新全局状态
+            # 将用户确认的变更回写到 state_change_log，
+            # 确保后续 rebuild 只 replay 用户实际确认的状态
             if confirmed_changes:
-                patched = await self._patch_world_state(chapter.project_id, confirmed_changes)
+                import copy
+                log = copy.deepcopy(chapter.state_change_log) if isinstance(chapter.state_change_log, dict) else {}
+
+                # 用 confirmed_changes 覆盖对应字段，未确认的字段清除
+                state_fields = ["location_change", "items_gained", "items_lost",
+                                "status_changes", "relationships", "time_passed"]
+                for field in state_fields:
+                    if field in confirmed_changes:
+                        log[field] = confirmed_changes[field]
+                    else:
+                        log.pop(field, None)
+
+                chapter.state_change_log = log
+
+                patched = await self._rebuild_world_state_from_chapters(chapter.project_id)
                 if not patched:
-                    logger.warning("⚠️ 全局状态更新失败，保留待确认状态")
+                    logger.warning("⚠️ 全局状态重建失败，保留待确认状态")
                     return False
 
             # 清除待确认状态
@@ -976,7 +1134,19 @@ class ChapterMemoryService:
                 logger.warning(f"⚠️ pending_state_change 类型错误: {type(pending_changes).__name__}")
                 return False
 
+            # 拒绝后清除 state_change_log 中的状态字段，保留 summary/end_hook
+            import copy
+            log = copy.deepcopy(chapter.state_change_log) if isinstance(chapter.state_change_log, dict) else {}
+            for field in ["location_change", "items_gained", "items_lost",
+                          "status_changes", "relationships", "time_passed"]:
+                log.pop(field, None)
+            chapter.state_change_log = log
+
             chapter.pending_state_change = None
+
+            # 重建世界状态（排除被拒绝章节的状态影响）
+            await self._rebuild_world_state_from_chapters(chapter.project_id)
+
             await self.db.commit()
 
             logger.info(f"🚫 状态变化已拒绝: chapter_id={chapter_id[:8]}")

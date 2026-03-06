@@ -531,6 +531,72 @@ async def get_available_models(
         )
 
 
+@router.get("/task-channel-models")
+async def get_task_channel_models(
+    task_type: str = "writing",
+    user: User = Depends(require_login),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    获取指定任务渠道对应的模型列表和当前模型名。
+    如果渠道有配置预设，使用预设的 API 配置拉取模型列表；
+    否则使用默认配置。
+    """
+    if task_type not in VALID_TASK_TYPES:
+        raise HTTPException(status_code=400, detail=f"无效的任务类型: {task_type}")
+
+    settings = await get_user_settings(user.user_id, db)
+
+    try:
+        prefs = json.loads(settings.preferences or '{}')
+    except json.JSONDecodeError:
+        prefs = {}
+
+    task_channels = prefs.get('task_channels', {})
+    channel = task_channels.get(task_type, {})
+    preset_id = channel.get('preset_id') if isinstance(channel, dict) else None
+
+    # 确定要使用的 API 配置
+    api_key = settings.api_key
+    api_base_url = settings.api_base_url or ""
+    api_provider = settings.api_provider or "openai"
+    current_model = settings.llm_model
+    preset_name = None
+
+    if preset_id:
+        api_presets = prefs.get('api_presets', {}).get('presets', [])
+        target_preset = next((p for p in api_presets if p['id'] == preset_id), None)
+
+        if target_preset and 'config' in target_preset:
+            cfg = target_preset['config']
+            api_key = cfg.get('api_key', api_key)
+            api_base_url = cfg.get('api_base_url', api_base_url)
+            api_provider = cfg.get('api_provider', api_provider)
+            current_model = cfg.get('llm_model', current_model)
+            preset_name = target_preset.get('name')
+
+    # 拉取模型列表（复用 get_available_models 的逻辑）
+    models = []
+    if api_key and api_base_url:
+        try:
+            result = await get_available_models(
+                api_key=api_key,
+                api_base_url=api_base_url,
+                provider=api_provider
+            )
+            models = result.get("models", [])
+        except Exception as e:
+            logger.warning(f"任务渠道 [{task_type}] 拉取模型列表失败: {e}")
+
+    return {
+        "task_type": task_type,
+        "current_model": current_model,
+        "preset_name": preset_name,
+        "models": models,
+        "count": len(models)
+    }
+
+
 @router.get("/embedding-models")
 async def get_embedding_models(
     api_key: str,

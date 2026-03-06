@@ -42,6 +42,7 @@ class ProjectUpdate(BaseModel):
     chapter_count: Optional[int] = None
     narrative_perspective: Optional[str] = None
     character_count: Optional[int] = None
+    world_state: Optional[Dict[str, Any]] = None
     # current_words 由章节内容自动计算，不允许手动修改
 
 

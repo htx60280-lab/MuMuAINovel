@@ -237,6 +237,10 @@ class PartialRegenerateRequest(BaseModel):
         ge=10,
         le=5000
     )
+    current_content: Optional[str] = Field(
+        None,
+        description="编辑器中的当前内容（用于未保存时的位置校验）"
+    )
     
     model_config = ConfigDict(json_schema_extra={
         "example": {

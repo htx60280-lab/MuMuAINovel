@@ -13,6 +13,7 @@ interface PartialRegenerateModalProps {
   startPosition: number;
   endPosition: number;
   styleId?: number;
+  currentContent?: string;
   onClose: () => void;
   onApply: (newText: string, startPosition: number, endPosition: number) => void;
 }
@@ -30,6 +31,7 @@ export const PartialRegenerateModal: React.FC<PartialRegenerateModalProps> = ({
   startPosition,
   endPosition,
   styleId,
+  currentContent,
   onClose,
   onApply,
 }) => {
@@ -91,6 +93,7 @@ export const PartialRegenerateModal: React.FC<PartialRegenerateModalProps> = ({
           style_id: styleId,
           length_mode: lengthMode,
           target_word_count: lengthMode === 'custom' ? customWordCount : undefined,
+          current_content: currentContent,
         },
         {
           onProgress: (msg, prog) => {
@@ -118,7 +121,8 @@ export const PartialRegenerateModal: React.FC<PartialRegenerateModalProps> = ({
     } catch (error) {
       console.error('生成失败:', error);
       if ((error as Error).name !== 'AbortError') {
-        message.error('生成失败，请重试');
+        const errMsg = (error as Error).message || '生成失败，请重试';
+        message.error(errMsg);
       }
       setIsGenerating(false);
     }

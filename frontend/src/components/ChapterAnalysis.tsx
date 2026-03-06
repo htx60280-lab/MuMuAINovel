@@ -173,14 +173,41 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || '触发分析失败');
+        throw new Error('触发分析失败');
       }
 
-      // 触发成功后立即关闭Modal，让父组件的状态管理接管
-      onClose();
+      // 开始轮询
+      startPolling();
     } catch (err) {
-      setError((err as Error).message);
+      setError(err instanceof Error ? err.message : '触发分析失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const reextractState = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const response = await fetch(`/api/chapters/${chapterId}/reextract-state`, {
+        method: 'POST'
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || '重新提取状态失败');
+      }
+
+      await response.json();
+
+      // 刷新分析结果
+      await fetchAnalysisStatus();
+
+      // 显示成功消息
+      alert('状态重新提取成功！');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '重新提取状态失败');
     } finally {
       setLoading(false);
     }
@@ -682,7 +709,7 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
             loading={loading}
             size={isMobile ? 'small' : 'middle'}
           >
-            开始分析
+            开始内容分析
           </Button>
         ),
         task && (task.status === 'failed') && (
@@ -695,7 +722,7 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
             danger
             size={isMobile ? 'small' : 'middle'}
           >
-            重新分析
+            重新内容分析
           </Button>
         ),
         task && task.status === 'completed' && (
@@ -707,7 +734,19 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
             loading={loading}
             size={isMobile ? 'small' : 'middle'}
           >
-            重新分析
+            重新内容分析
+          </Button>
+        ),
+        task && task.status === 'completed' && (
+          <Button
+            key="reextract-state"
+            type="default"
+            icon={<ThunderboltOutlined />}
+            onClick={reextractState}
+            loading={loading}
+            size={isMobile ? 'small' : 'middle'}
+          >
+            重新提取状态
           </Button>
         )
       ].filter(Boolean)}

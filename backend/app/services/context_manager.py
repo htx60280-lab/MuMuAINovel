@@ -516,7 +516,7 @@ class ContextAgent:
             response = await ai_service.generate_text(
                 prompt=prompt,
                 system_prompt="你是一个实体识别助手，只输出JSON数组。",
-                max_tokens=500
+                max_tokens=1500
             )
 
             # 解析响应
@@ -566,7 +566,7 @@ class ContextAgent:
                 query = select(ChapterMemory).where(
                     ChapterMemory.project_id == project_id,
                     ChapterMemory.content.ilike(f"%{entity}%")
-                ).order_by(desc(ChapterMemory.chapter_number)).limit(3)
+                ).order_by(desc(ChapterMemory.story_timeline)).limit(3)
 
                 result = await self.db.execute(query)
                 memories = result.scalars().all()
@@ -574,7 +574,7 @@ class ContextAgent:
                 for mem in memories:
                     results.append({
                         "content": mem.content,
-                        "chapter_number": mem.chapter_number,
+                        "chapter_number": mem.story_timeline,
                         "entity_matched": entity,
                         "source": "precise_search"
                     })

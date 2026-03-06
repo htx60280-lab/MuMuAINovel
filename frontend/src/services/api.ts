@@ -409,7 +409,7 @@ export const bookImportApi = {
     return api.post<unknown, { task_id: string; status: BookImportTask['status'] }>(
       '/book-import/tasks',
       formData,
-      { headers: { 'Content-Type': 'multipart/form-data' } }
+      { headers: { 'Content-Type': undefined }, timeout: 300000 }
     );
   },
 
@@ -692,6 +692,7 @@ export const chapterApi = {
       style_id?: number;
       length_mode?: 'similar' | 'expand' | 'condense' | 'custom';
       target_word_count?: number;
+      current_content?: string;
     },
     options?: SSEClientOptions
   ) => ssePost<{

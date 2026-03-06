@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, Pagination, FloatButton, Typography } from 'antd';
-import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, FormOutlined, PlusOutlined, ReadOutlined, AuditOutlined } from '@ant-design/icons';
+import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, Pagination, Typography } from 'antd';
+import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, FormOutlined, PlusOutlined, ReadOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { useChapterSync } from '../store/hooks';
-import { projectApi, writingStyleApi, chapterApi, stateChangeApi } from '../services/api';
+import { projectApi, writingStyleApi, chapterApi } from '../services/api';
 import type { Chapter, ChapterUpdate, ApiError, WritingStyle, AnalysisTask, ExpansionPlanData } from '../types';
 import type { TextAreaRef } from 'antd/es/input/TextArea';
 import ChapterAnalysis from '../components/ChapterAnalysis';
@@ -13,8 +13,7 @@ import { SSEProgressModal } from '../components/SSEProgressModal';
 import ChapterReader from '../components/ChapterReader';
 import PartialRegenerateToolbar from '../components/PartialRegenerateToolbar';
 import PartialRegenerateModal from '../components/PartialRegenerateModal';
-
-import StateChangeConfirmModal from '../components/StateChangeConfirmModal';
+import WorldStateEditor from '../components/WorldStateEditor';
 
 const { TextArea } = Input;
 const { Paragraph } = Typography;
@@ -102,9 +101,11 @@ export default function Chapters() {
   const [selectionEndPosition, setSelectionEndPosition] = useState(0);
   const [partialRegenerateModalVisible, setPartialRegenerateModalVisible] = useState(false);
 
-  // 状态变化确认弹窗状态
-  const [stateConfirmModalVisible, setStateConfirmModalVisible] = useState(false);
-  const [stateConfirmChapter, setStateConfirmChapter] = useState<Chapter | null>(null);
+  // 章节状态查看弹窗
+  const [chapterStateModalVisible, setChapterStateModalVisible] = useState(false);
+  const [viewingChapterState, setViewingChapterState] = useState<Chapter | null>(null);
+  const [worldStateModalVisible, setWorldStateModalVisible] = useState(false);
+  const [worldStateEditorVisible, setWorldStateEditorVisible] = useState(false);
 
   // 单章节生成进度状态
   const [singleChapterProgress, setSingleChapterProgress] = useState(0);
@@ -492,7 +493,18 @@ export default function Chapters() {
 
   const loadAvailableModels = async () => {
     try {
-      // 从设置API获取用户配置的模型列表
+      // 优先从任务渠道 (writing) 获取模型列表和当前模型
+      const channelResponse = await fetch('/api/settings/task-channel-models?task_type=writing');
+      if (channelResponse.ok) {
+        const data = await channelResponse.json();
+        if (data.models && data.models.length > 0) {
+          setAvailableModels(data.models);
+          setSelectedModel(data.current_model);
+          return data.current_model;
+        }
+      }
+
+      // 回退：从全局默认设置获取
       const settingsResponse = await fetch('/api/settings');
       if (settingsResponse.ok) {
         const settings = await settingsResponse.json();
@@ -507,9 +519,8 @@ export default function Chapters() {
               const data = await modelsResponse.json();
               if (data.models && data.models.length > 0) {
                 setAvailableModels(data.models);
-                // 设置默认模型为当前配置的模型
                 setSelectedModel(settings.llm_model);
-                return settings.llm_model; // 返回模型名称
+                return settings.llm_model;
               }
             }
           } catch {
@@ -686,50 +697,7 @@ export default function Chapters() {
     }
   }, [filteredSortedChapters.length, chapterPage, chapterPageSize]);
 
-  // 预计算每章可生成状态，避免在渲染阶段重复 O(n²) 扫描
-  const chapterGenerateGateMap = useMemo(() => {
-    const gateMap: Record<string, { canGenerate: boolean; reason: string }> = {};
-    const incompleteChapterNumbers: number[] = [];
-    const unanalyzedChapters: Array<{ chapterNumber: number; reason: string }> = [];
-
-    sortedChapters.forEach((chapter) => {
-      if (incompleteChapterNumbers.length > 0) {
-        gateMap[chapter.id] = {
-          canGenerate: false,
-          reason: `需要先完成前置章节：第 ${incompleteChapterNumbers.join('、')} 章`
-        };
-      } else if (unanalyzedChapters.length > 0) {
-        gateMap[chapter.id] = {
-          canGenerate: false,
-          reason: `需要先分析前置章节：第 ${unanalyzedChapters.map(c => c.chapterNumber).join('、')} 章 (${unanalyzedChapters.map(c => c.reason).join('、')})`
-        };
-      } else {
-        gateMap[chapter.id] = { canGenerate: true, reason: '' };
-      }
-
-      // 将当前章纳入“后续章节”的前置条件
-      if (!chapter.content || chapter.content.trim() === '') {
-        incompleteChapterNumbers.push(chapter.chapter_number);
-      }
-
-      const task = analysisTasksMap[chapter.id];
-      if (!task || !task.has_task) {
-        unanalyzedChapters.push({ chapterNumber: chapter.chapter_number, reason: '未分析' });
-      } else if (task.status === 'pending') {
-        unanalyzedChapters.push({ chapterNumber: chapter.chapter_number, reason: '等待分析' });
-      } else if (task.status === 'running') {
-        unanalyzedChapters.push({ chapterNumber: chapter.chapter_number, reason: '分析中' });
-      } else if (task.status === 'failed') {
-        unanalyzedChapters.push({ chapterNumber: chapter.chapter_number, reason: '分析失败' });
-      } else if (task.status !== 'completed') {
-        unanalyzedChapters.push({ chapterNumber: chapter.chapter_number, reason: '状态未知' });
-      }
-    });
-
-    return gateMap;
-  }, [sortedChapters, analysisTasksMap]);
-
-  // 当前可被“一键分析”的章节（有内容且未处于完成/进行中）
+  // 当前可被”一键分析”的章节（有内容且未处于完成/进行中）
   const batchAnalyzableChapterCount = useMemo(() => {
     return sortedChapters.filter((chapter) => {
       if (!chapter.content || chapter.content.trim() === '') return false;
@@ -933,6 +901,26 @@ export default function Chapters() {
     } catch {
       message.error('保存失败');
     }
+  };
+
+  const handleSaveWorldState = async (newState: Record<string, any>) => {
+    if (!currentProject) return;
+
+    try {
+      const updatedProject = await projectApi.updateProject(currentProject.id, {
+        world_state: newState
+      });
+      setCurrentProject(updatedProject);
+      message.success('世界状态已更新');
+    } catch (error) {
+      console.error('更新世界状态失败:', error);
+      throw error;
+    }
+  };
+
+  const handleViewChapterState = (chapter: Chapter) => {
+    setViewingChapterState(chapter);
+    setChapterStateModalVisible(true);
   };
 
   const handleGenerate = async () => {
@@ -1984,6 +1972,7 @@ export default function Chapters() {
   };
 
 
+  /* 已废弃 - 状态现在自动生效
   const hasPendingStateChange = (
     pendingStateChange: Chapter['pending_state_change'] | null | undefined
   ): boolean => {
@@ -2019,6 +2008,7 @@ export default function Chapters() {
       message.error('获取状态变化失败，请重试');
     }
   };
+  */
 
   // 应用局部重写结果
   const handleApplyPartialRegenerate = (newText: string, startPos: number, endPos: number) => {
@@ -2120,68 +2110,22 @@ export default function Chapters() {
           >
             导出为TXT
           </Button>
+          <Button
+            icon={<SettingOutlined />}
+            onClick={() => setWorldStateModalVisible(true)}
+            block={isMobile}
+          >
+            世界状态
+          </Button>
+          {!isMobile && (
+            <Tag color="blue">
+              {currentProject.outline_mode === 'one-to-one'
+                ? '传统模式：章节由大纲管理，请在大纲页面操作'
+                : '细化模式：章节可在大纲页面展开'}
+            </Tag>
+          )}
         </Space>
       </div>
-
-      <Collapse
-        bordered={false}
-        defaultActiveKey={[]}
-        expandIconPosition="end"
-        style={{
-          marginBottom: isMobile ? 12 : 16,
-          background: '#fff',
-          borderRadius: 8,
-          border: '1px solid #f0f0f0'
-        }}
-      >
-        <Collapse.Panel
-          key="world-state"
-          header={(
-            <Space size={8}>
-              <SettingOutlined style={{ color: 'var(--color-primary)' }} />
-              <span>世界状态</span>
-            </Space>
-          )}
-          style={{ border: 'none' }}
-        >
-          <Descriptions
-            size="small"
-            column={isMobile ? 1 : 2}
-            layout="vertical"
-            bordered
-          >
-            <Descriptions.Item label="当前位置">
-              {renderWorldStateText(worldState.current_location)}
-            </Descriptions.Item>
-            <Descriptions.Item label="时间线">
-              {renderWorldStateText(worldState.last_time_reference)}
-            </Descriptions.Item>
-            <Descriptions.Item label="持有物品">
-              {renderWorldStateArray(worldState.inventory)}
-            </Descriptions.Item>
-            <Descriptions.Item label="人物关系">
-              {renderWorldStatePairs(worldState.relationships)}
-            </Descriptions.Item>
-            <Descriptions.Item label="状态变化">
-              {renderWorldStatePairs(worldState.status_changes)}
-            </Descriptions.Item>
-            {worldStateExtraEntries.length > 0 && (
-              <Descriptions.Item label="其他状态">
-                <Space direction="vertical" size={8} style={{ width: '100%' }}>
-                  {worldStateExtraEntries.map(([key, value]) => (
-                    <div key={key} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                      <Tag color="purple" style={{ margin: 0 }}>
-                        {key}
-                      </Tag>
-                      {renderWorldStateValue(value)}
-                    </div>
-                  ))}
-                </Space>
-              </Descriptions.Item>
-            )}
-          </Descriptions>
-        </Collapse.Panel>
-      </Collapse>
 
       <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
         {chapters.length === 0 ? (
@@ -2252,16 +2196,12 @@ export default function Chapters() {
                   </Button>,
                   <Button
                     type="text"
-                    icon={<FormOutlined />}
-                    onClick={() => handleOpenStateConfirm(item)}
-                    disabled={!hasPendingStateChange(item.pending_state_change)}
-                    title={
-                      hasPendingStateChange(item.pending_state_change)
-                        ? '确认状态变化'
-                        : '暂无待确认的状态变化'
-                    }
+                    icon={<SettingOutlined />}
+                    onClick={() => handleViewChapterState(item)}
+                    disabled={!item.state_change_log}
+                    title={item.state_change_log ? '查看章节状态' : '暂无状态信息'}
                   >
-                    状态确认
+                    查看状态
                   </Button>,
                 ]}
               >
@@ -2352,15 +2292,11 @@ export default function Chapters() {
                       />
                       <Button
                         type="text"
-                        icon={<FormOutlined />}
-                        onClick={() => handleOpenStateConfirm(item)}
+                        icon={<SettingOutlined />}
+                        onClick={() => handleViewChapterState(item)}
                         size="small"
-                        title={
-                          hasPendingStateChange(item.pending_state_change)
-                            ? '确认状态变化'
-                            : '暂无待确认的状态变化'
-                        }
-                        disabled={!hasPendingStateChange(item.pending_state_change)}
+                        title={item.state_change_log ? '查看章节状态' : '暂无状态信息'}
+                        disabled={!item.state_change_log}
                       />
                     </Space>
                   )}
@@ -2465,18 +2401,13 @@ export default function Chapters() {
                         </Button>,
                         <Button
                           type="text"
-                          icon={<FormOutlined />}
-                          onClick={() => handleOpenStateConfirm(item)}
-                          disabled={!hasPendingStateChange(item.pending_state_change)}
-                          title={
-                            hasPendingStateChange(item.pending_state_change)
-                              ? '确认状态变化'
-                              : '暂无待确认的状态变化'
-                          }
+                          icon={<SettingOutlined />}
+                          onClick={() => handleViewChapterState(item)}
+                          disabled={!item.state_change_log}
+                          title={item.state_change_log ? '查看章节状态' : '暂无状态信息'}
                         >
-                          状态确认
+                          查看状态
                         </Button>,
-                        // 只在 one-to-many 模式下显示删除按钮
                         ...(currentProject.outline_mode === 'one-to-many' ? [
                           <Popconfirm
                             title="确定删除这个章节吗？"
@@ -2604,15 +2535,11 @@ export default function Chapters() {
                             />
                             <Button
                               type="text"
-                              icon={<FormOutlined />}
-                              onClick={() => handleOpenStateConfirm(item)}
+                              icon={<SettingOutlined />}
+                              onClick={() => handleViewChapterState(item)}
                               size="small"
-                              title={
-                                hasPendingStateChange(item.pending_state_change)
-                                  ? '确认状态变化'
-                                  : '暂无待确认的状态变化'
-                              }
-                              disabled={!hasPendingStateChange(item.pending_state_change)}
+                              title={item.state_change_log ? '查看章节状态' : '暂无状态信息'}
+                              disabled={!item.state_change_log}
                             />
                             {/* 只在 one-to-many 模式下显示删除按钮 */}
                             {currentProject.outline_mode === 'one-to-many' && (
@@ -3262,6 +3189,7 @@ export default function Chapters() {
           startPosition={selectionStartPosition}
           endPosition={selectionEndPosition}
           styleId={selectedStyleId}
+          currentContent={editorForm.getFieldValue('content') || ''}
           onClose={() => setPartialRegenerateModalVisible(false)}
           onApply={handleApplyPartialRegenerate}
         />
@@ -3293,7 +3221,64 @@ export default function Chapters() {
         );
       })()}
 
-      {/* 状态变化确认弹窗 */}
+      {/* 世界状态弹窗 */}
+      <Modal
+        title={<Space><SettingOutlined style={{ color: 'var(--color-primary)' }} /><span>世界状态</span></Space>}
+        open={worldStateModalVisible}
+        onCancel={() => setWorldStateModalVisible(false)}
+        footer={[
+          <Button key="edit" type="primary" icon={<EditOutlined />} onClick={() => {
+            setWorldStateModalVisible(false);
+            setWorldStateEditorVisible(true);
+          }}>
+            编辑
+          </Button>,
+          <Button key="close" onClick={() => setWorldStateModalVisible(false)}>
+            关闭
+          </Button>
+        ]}
+        width={isMobile ? '95vw' : 720}
+        styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
+      >
+        <Descriptions
+          size="small"
+          column={isMobile ? 1 : 2}
+          layout="vertical"
+          bordered
+        >
+          <Descriptions.Item label="当前位置">
+            {renderWorldStateText(worldState.current_location)}
+          </Descriptions.Item>
+          <Descriptions.Item label="时间线">
+            {renderWorldStateText(worldState.last_time_reference)}
+          </Descriptions.Item>
+          <Descriptions.Item label="持有物品">
+            {renderWorldStateArray(worldState.inventory)}
+          </Descriptions.Item>
+          <Descriptions.Item label="人物关系">
+            {renderWorldStatePairs(worldState.relationships)}
+          </Descriptions.Item>
+          <Descriptions.Item label="状态变化">
+            {renderWorldStatePairs(worldState.status_changes)}
+          </Descriptions.Item>
+          {worldStateExtraEntries.length > 0 && (
+            <Descriptions.Item label="其他状态">
+              <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                {worldStateExtraEntries.map(([key, value]) => (
+                  <div key={key} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                    <Tag color="purple" style={{ margin: 0 }}>
+                      {key}
+                    </Tag>
+                    {renderWorldStateValue(value)}
+                  </div>
+                ))}
+              </Space>
+            </Descriptions.Item>
+          )}
+        </Descriptions>
+      </Modal>
+
+      {/* 状态变化确认弹窗 - 已禁用，状态现在自动生效
       {stateConfirmChapter && (
         <StateChangeConfirmModal
           visible={stateConfirmModalVisible}
@@ -3317,6 +3302,162 @@ export default function Chapters() {
           }}
         />
       )}
+      */}
+
+      {/* 章节状态查看弹窗 */}
+      <Modal
+        title={
+          <Space>
+            <SettingOutlined style={{ color: 'var(--color-primary)' }} />
+            <span>
+              第{viewingChapterState?.chapter_number}章 - 状态变化
+            </span>
+          </Space>
+        }
+        open={chapterStateModalVisible}
+        onCancel={() => {
+          setChapterStateModalVisible(false);
+          setViewingChapterState(null);
+        }}
+        footer={[
+          <Button key="close" onClick={() => {
+            setChapterStateModalVisible(false);
+            setViewingChapterState(null);
+          }}>
+            关闭
+          </Button>
+        ]}
+        width={isMobile ? '95vw' : 720}
+        styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
+      >
+        {viewingChapterState?.state_change_log && (
+          <Descriptions
+            size="small"
+            column={1}
+            layout="vertical"
+            bordered
+          >
+            {/* 摘要 */}
+            {viewingChapterState.state_change_log.summary && (
+              <Descriptions.Item label="章节摘要">
+                <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
+                  {viewingChapterState.state_change_log.summary}
+                </div>
+              </Descriptions.Item>
+            )}
+
+            {/* 位置变化 */}
+            {viewingChapterState.state_change_log.location_change?.to && (
+              <Descriptions.Item label="位置变化">
+                <Space>
+                  {viewingChapterState.state_change_log.location_change.from && (
+                    <>
+                      <Tag color="default">{viewingChapterState.state_change_log.location_change.from}</Tag>
+                      <span>→</span>
+                    </>
+                  )}
+                  <Tag color="blue">{viewingChapterState.state_change_log.location_change.to}</Tag>
+                </Space>
+              </Descriptions.Item>
+            )}
+
+            {/* 物品获得 */}
+            {viewingChapterState.state_change_log.items_gained &&
+             viewingChapterState.state_change_log.items_gained.length > 0 && (
+              <Descriptions.Item label="获得物品">
+                <Space wrap>
+                  {viewingChapterState.state_change_log.items_gained.map((item: string, index: number) => (
+                    <Tag key={index} color="green">{item}</Tag>
+                  ))}
+                </Space>
+              </Descriptions.Item>
+            )}
+
+            {/* 物品失去 */}
+            {viewingChapterState.state_change_log.items_lost &&
+             viewingChapterState.state_change_log.items_lost.length > 0 && (
+              <Descriptions.Item label="失去物品">
+                <Space wrap>
+                  {viewingChapterState.state_change_log.items_lost.map((item: string, index: number) => (
+                    <Tag key={index} color="red">{item}</Tag>
+                  ))}
+                </Space>
+              </Descriptions.Item>
+            )}
+
+            {/* 状态变化 */}
+            {viewingChapterState.state_change_log.status_changes &&
+             Object.keys(viewingChapterState.state_change_log.status_changes).length > 0 && (
+              <Descriptions.Item label="状态变化">
+                <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                  {Object.entries(viewingChapterState.state_change_log.status_changes).map(([key, value]) => (
+                    <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <Tag color="geekblue">{key}</Tag>
+                      <span>{String(value)}</span>
+                    </div>
+                  ))}
+                </Space>
+              </Descriptions.Item>
+            )}
+
+            {/* 关系变化 */}
+            {viewingChapterState.state_change_log.relationships &&
+             Object.keys(viewingChapterState.state_change_log.relationships).length > 0 && (
+              <Descriptions.Item label="关系变化">
+                <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                  {Object.entries(viewingChapterState.state_change_log.relationships).map(([key, value]) => (
+                    <div key={key} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                      <Tag color="purple">{key}</Tag>
+                      <span style={{ flex: 1 }}>{String(value)}</span>
+                    </div>
+                  ))}
+                </Space>
+              </Descriptions.Item>
+            )}
+
+            {/* 时间流逝 */}
+            {viewingChapterState.state_change_log.time_passed && (
+              <Descriptions.Item label="时间流逝">
+                <Tag color="orange">{viewingChapterState.state_change_log.time_passed}</Tag>
+              </Descriptions.Item>
+            )}
+
+            {/* 章节钩子 */}
+            {viewingChapterState.state_change_log.end_hook && (
+              <Descriptions.Item label="章节钩子">
+                <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                  <div>
+                    <Tag color="magenta">{viewingChapterState.state_change_log.end_hook.type}</Tag>
+                    {viewingChapterState.state_change_log.end_hook.must_respond_next && (
+                      <Tag color="red">需响应</Tag>
+                    )}
+                  </div>
+                  <div style={{
+                    padding: 12,
+                    background: 'var(--color-bg-layout)',
+                    borderRadius: 4,
+                    borderLeft: '3px solid var(--color-primary)'
+                  }}>
+                    {viewingChapterState.state_change_log.end_hook.content}
+                  </div>
+                </Space>
+              </Descriptions.Item>
+            )}
+          </Descriptions>
+        )}
+
+        {!viewingChapterState?.state_change_log && (
+          <Empty description="暂无状态信息" />
+        )}
+      </Modal>
+
+      {/* 世界状态编辑器 */}
+      <WorldStateEditor
+        visible={worldStateEditorVisible}
+        worldState={worldState}
+        onSave={handleSaveWorldState}
+        onCancel={() => setWorldStateEditorVisible(false)}
+      />
     </div>
   );
 }

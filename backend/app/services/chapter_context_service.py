@@ -143,7 +143,7 @@ class OneToManyContextBuilder:
     """
     
     # 配置常量
-    ENDING_LENGTH = 500          # 统一衔接长度500字
+    ENDING_LENGTH = 3000         # 统一衔接长度3000字
     MEMORY_COUNT = 10            # 记忆条数
     MEMORY_SIMILARITY_THRESHOLD = 0.6  # 记忆相关度阈值
     RECENT_CHAPTERS_COUNT = 10   # 最近章节规划数量

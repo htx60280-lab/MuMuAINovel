@@ -269,7 +269,7 @@ async def _apply_quality_gate_with_rewrite(
             system_prompt=system_prompt,
             max_tokens=max_tokens,
             model=model,
-            tool_choice="required",
+            auto_mcp=False,
         )
         rewritten_content = (
             rewrite_response.get("content", "")
@@ -533,6 +533,7 @@ async def _apply_guardrails_check(
             system_prompt=system_prompt,
             max_tokens=max_tokens,
             model=model,
+            auto_mcp=False,
         )
         rewritten = (
             rewrite_response.get("content", "")
@@ -2403,7 +2404,10 @@ async def generate_chapter_content_stream(
                         yield await tracker.heartbeat()
 
                     await asyncio.sleep(0)  # 让出控制权
-                
+
+                # 记录流式阶段的原始内容，用于后续判断是否被重写
+                streamed_content = full_content
+
                 # === 质量门控阶段（使用 review 渠道 AI 服务）===
                 try:
                     review_ai_service_for_gate = await _resolve_task_ai_service_standalone(
@@ -2449,6 +2453,11 @@ async def generate_chapter_content_stream(
                         max_tokens=calculated_max_tokens,
                         model=custom_model,
                     )
+
+                # 如果质量门控或护栏重写了内容，通知前端替换显示
+                if full_content != streamed_content:
+                    logger.info(f"📝 内容被重写，发送 content_replace 到前端")
+                    yield await tracker.content_replace(full_content)
 
                 # === 保存阶段 ===
                 yield await tracker.saving("正在保存章节...", 0.3)
@@ -4612,27 +4621,30 @@ async def partial_regenerate_stream(
     
     if not chapter.content or chapter.content.strip() == "":
         raise HTTPException(status_code=400, detail="章节内容为空")
-    
+
     # 验证用户权限
     await verify_project_access(chapter.project_id, user_id, db)
-    
+
+    # 如果前端传了当前编辑器内容，优先使用它（解决编辑未保存时位置不匹配的问题）
+    working_content = partial_request.current_content if partial_request.current_content else chapter.content
+
     # 验证位置参数
-    content_length = len(chapter.content)
+    content_length = len(working_content)
     if partial_request.start_position >= content_length:
         raise HTTPException(status_code=400, detail="起始位置超出内容范围")
     if partial_request.end_position > content_length:
         raise HTTPException(status_code=400, detail="结束位置超出内容范围")
     if partial_request.start_position >= partial_request.end_position:
         raise HTTPException(status_code=400, detail="起始位置必须小于结束位置")
-    
+
     # 验证选中的文本是否匹配
-    actual_selected = chapter.content[partial_request.start_position:partial_request.end_position]
+    actual_selected = working_content[partial_request.start_position:partial_request.end_position]
     if actual_selected != partial_request.selected_text:
         # 位置可能有偏差，尝试在附近查找
-        search_start = max(0, partial_request.start_position - 50)
-        search_end = min(content_length, partial_request.end_position + 50)
-        search_area = chapter.content[search_start:search_end]
-        
+        search_start = max(0, partial_request.start_position - 200)
+        search_end = min(content_length, partial_request.end_position + 200)
+        search_area = working_content[search_start:search_end]
+
         if partial_request.selected_text in search_area:
             # 找到了，更新位置
             offset = search_area.find(partial_request.selected_text)
@@ -4697,11 +4709,11 @@ async def partial_regenerate_stream(
             
             # 前文：从start_pos往前截取context_chars个字符
             context_before_start = max(0, start_pos - context_chars)
-            context_before = chapter.content[context_before_start:start_pos]
-            
+            context_before = working_content[context_before_start:start_pos]
+
             # 后文：从end_pos往后截取context_chars个字符
             context_after_end = min(content_length, end_pos + context_chars)
-            context_after = chapter.content[end_pos:context_after_end]
+            context_after = working_content[end_pos:context_after_end]
             
             # 原文
             original_text = partial_request.selected_text
@@ -4756,8 +4768,10 @@ async def partial_regenerate_stream(
                 target_words = partial_request.target_word_count
             else:
                 target_words = int(original_word_count * 1.5)
-            
-            calculated_max_tokens = max(500, min(int(target_words * 3), 8000))
+
+            # Gemini 推理模型需要更大的 max_tokens（推理token也计入限制）
+            # 为推理预留额外空间：基础token * 4 + 2000（推理缓冲）
+            calculated_max_tokens = max(2000, min(int(target_words * 4) + 2000, 32000))
             
             # 流式生成
             full_content = ""
@@ -5008,6 +5022,114 @@ async def reject_state_change(
         "success": True,
         "message": "状态变化已拒绝"
     }
+
+
+@router.post("/{chapter_id}/reextract-state", summary="重新提取章节状态")
+async def reextract_chapter_state(
+    chapter_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    重新提取章节的状态变更（用于修复缺失的状态分析）
+
+    工作流程：
+    1. 验证章节存在且有内容
+    2. 调用 ChapterMemoryService 重新提取状态
+    3. 更新章节的 state_change_log 和 pending_state_change
+    4. 重建项目的世界状态
+    """
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+
+    # 验证章节存在
+    result = await db.execute(
+        select(Chapter).where(Chapter.id == chapter_id)
+    )
+    chapter = result.scalar_one_or_none()
+
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+
+    await verify_project_access(chapter.project_id, user_id, db)
+
+    if not chapter.content or len(chapter.content.strip()) < 100:
+        raise HTTPException(status_code=400, detail="章节内容过短，无法提取状态")
+
+    # 获取用户设置并创建 AI 服务
+    from app.models.settings import Settings
+    from app.api.settings import create_user_ai_service_with_mcp
+    from app.models.mcp_plugin import MCPPlugin
+
+    settings_result = await db.execute(
+        select(Settings).where(Settings.user_id == user_id)
+    )
+    settings = settings_result.scalar_one_or_none()
+
+    if not settings:
+        raise HTTPException(status_code=400, detail="用户未配置AI设置")
+
+    # 查询用户的MCP插件状态
+    mcp_result = await db.execute(
+        select(MCPPlugin).where(MCPPlugin.user_id == user_id)
+    )
+    mcp_plugins = mcp_result.scalars().all()
+    enable_mcp = any(plugin.enabled for plugin in mcp_plugins) if mcp_plugins else False
+
+    ai_service = create_user_ai_service_with_mcp(
+        api_provider=settings.api_provider,
+        api_key=settings.api_key,
+        api_base_url=settings.api_base_url,
+        model_name=settings.llm_model,
+        temperature=settings.temperature,
+        max_tokens=settings.max_tokens,
+        user_id=user_id,
+        db_session=db,
+        system_prompt=settings.system_prompt,
+        enable_mcp=enable_mcp,
+    )
+
+    # 创建 ChapterMemoryService 并重新提取状态
+    from app.services.chapter_memory_service import ChapterMemoryService
+    service = ChapterMemoryService(db=db, ai_service=ai_service)
+
+    try:
+        # 调用内部方法提取状态
+        state_change = await service._extract_state_change(
+            content=chapter.content,
+            project_id=chapter.project_id,
+            chapter_number=chapter.chapter_number
+        )
+
+        if not state_change:
+            raise HTTPException(status_code=500, detail="状态提取失败，AI 返回为空")
+
+        # 保存状态变更
+        success = await service._save_chapter_state_change(chapter_id, state_change)
+
+        if not success:
+            raise HTTPException(status_code=500, detail="保存状态变更失败")
+
+        # 重建世界状态
+        await service._rebuild_world_state_from_chapters(chapter.project_id)
+
+        await db.commit()
+
+        return {
+            "success": True,
+            "message": "状态重新提取成功",
+            "state_change": state_change
+        }
+
+    except HTTPException:
+        # 重新抛出 HTTPException，不要包装
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"❌ 重新提取状态失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"重新提取状态失败: {str(e)}")
 
 
 @router.post("/project/{project_id}/batch-vectorize", summary="批量向量化项目章节")

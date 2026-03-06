@@ -361,6 +361,12 @@ export function useChapterSync() {
                 if (onProgress) {
                   onProgress(fullContent);
                 }
+              } else if (message.type === 'content_replace' && message.content) {
+                // 质量门控/护栏重写后的完整内容替换
+                fullContent = message.content;
+                if (onProgress) {
+                  onProgress(fullContent);
+                }
               } else if (message.type === 'error') {
                 throw new Error(message.error || '生成失败');
               } else if (message.type === 'result') {

@@ -165,6 +165,13 @@ class WizardProgressTracker:
     async def generating_chunk(self, chunk: str) -> str:
         """发送生成的内容块"""
         return await SSEResponse.send_chunk(chunk)
+
+    async def content_replace(self, full_content: str) -> str:
+        """发送完整内容替换（质量门控/护栏重写后用来覆盖前端已显示的第一版内容）"""
+        return SSEResponse.format_sse({
+            "type": "content_replace",
+            "content": full_content
+        })
     
     async def parsing(self, message: str = None, sub_progress: float = 0.5) -> str:
         """解析数据阶段"""

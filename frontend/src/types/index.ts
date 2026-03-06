@@ -169,6 +169,7 @@ export interface ProjectUpdate {
   chapter_count?: number;
   narrative_perspective?: string;
   character_count?: number;
+  world_state?: Record<string, any>;
   // current_words 由章节内容自动计算，不在此接口中
 }
 
@@ -334,6 +335,20 @@ export interface Chapter {
     relationships?: Record<string, string>;
     status_changes?: Record<string, number>;
     time_passed?: string;
+  } | null;
+  state_change_log?: {
+    summary?: string;
+    items_gained?: string[];
+    items_lost?: string[];
+    location_change?: { from: string | null; to: string | null };
+    relationships?: Record<string, string>;
+    status_changes?: Record<string, any>;
+    time_passed?: string;
+    end_hook?: {
+      type: string;
+      content: string;
+      must_respond_next: boolean;
+    } | null;
   } | null;
   created_at: string;
   updated_at: string;

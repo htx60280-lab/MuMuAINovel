@@ -157,7 +157,16 @@ export class SSEPostClient {
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        // 尝试读取后端返回的具体错误信息
+        let detail = '';
+        try {
+          const errorBody = await response.json();
+          detail = errorBody.detail || errorBody.message || JSON.stringify(errorBody);
+        } catch {
+          detail = `HTTP ${response.status}`;
+        }
+        this.rejectOnce(reject, detail, response.status);
+        return;
       }
 
       const reader = response.body?.getReader();
