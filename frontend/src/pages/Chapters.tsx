@@ -2198,8 +2198,8 @@ export default function Chapters() {
                     type="text"
                     icon={<SettingOutlined />}
                     onClick={() => handleViewChapterState(item)}
-                    disabled={!item.state_change_log}
-                    title={item.state_change_log ? '查看章节状态' : '暂无状态信息'}
+                    disabled={!item.state_change_log && !item.pending_state_change}
+                    title={(item.state_change_log || item.pending_state_change) ? '查看章节状态' : '暂无状态信息'}
                   >
                     查看状态
                   </Button>,
@@ -3330,125 +3330,129 @@ export default function Chapters() {
         width={isMobile ? '95vw' : 720}
         styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
       >
-        {viewingChapterState?.state_change_log && (
-          <Descriptions
-            size="small"
-            column={1}
-            layout="vertical"
-            bordered
-          >
-            {/* 摘要 */}
-            {viewingChapterState.state_change_log.summary && (
-              <Descriptions.Item label="章节摘要">
-                <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
-                  {viewingChapterState.state_change_log.summary}
-                </div>
-              </Descriptions.Item>
-            )}
+        {(() => {
+          const stateData = viewingChapterState?.state_change_log || viewingChapterState?.pending_state_change;
 
-            {/* 位置变化 */}
-            {viewingChapterState.state_change_log.location_change?.to && (
-              <Descriptions.Item label="位置变化">
-                <Space>
-                  {viewingChapterState.state_change_log.location_change.from && (
-                    <>
-                      <Tag color="default">{viewingChapterState.state_change_log.location_change.from}</Tag>
-                      <span>→</span>
-                    </>
-                  )}
-                  <Tag color="blue">{viewingChapterState.state_change_log.location_change.to}</Tag>
-                </Space>
-              </Descriptions.Item>
-            )}
+          if (!stateData) {
+            return <Empty description="暂无状态信息" />;
+          }
 
-            {/* 物品获得 */}
-            {viewingChapterState.state_change_log.items_gained &&
-             viewingChapterState.state_change_log.items_gained.length > 0 && (
-              <Descriptions.Item label="获得物品">
-                <Space wrap>
-                  {viewingChapterState.state_change_log.items_gained.map((item: string, index: number) => (
-                    <Tag key={index} color="green">{item}</Tag>
-                  ))}
-                </Space>
-              </Descriptions.Item>
-            )}
+          return (
+            <Descriptions
+              size="small"
+              column={1}
+              layout="vertical"
+              bordered
+            >
+              {/* 摘要 */}
+              {stateData.summary && (
+                <Descriptions.Item label="章节摘要">
+                  <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
+                    {stateData.summary}
+                  </div>
+                </Descriptions.Item>
+              )}
 
-            {/* 物品失去 */}
-            {viewingChapterState.state_change_log.items_lost &&
-             viewingChapterState.state_change_log.items_lost.length > 0 && (
-              <Descriptions.Item label="失去物品">
-                <Space wrap>
-                  {viewingChapterState.state_change_log.items_lost.map((item: string, index: number) => (
-                    <Tag key={index} color="red">{item}</Tag>
-                  ))}
-                </Space>
-              </Descriptions.Item>
-            )}
-
-            {/* 状态变化 */}
-            {viewingChapterState.state_change_log.status_changes &&
-             Object.keys(viewingChapterState.state_change_log.status_changes).length > 0 && (
-              <Descriptions.Item label="状态变化">
-                <Space direction="vertical" size={4} style={{ width: '100%' }}>
-                  {Object.entries(viewingChapterState.state_change_log.status_changes).map(([key, value]) => (
-                    <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <Tag color="geekblue">{key}</Tag>
-                      <span>{String(value)}</span>
-                    </div>
-                  ))}
-                </Space>
-              </Descriptions.Item>
-            )}
-
-            {/* 关系变化 */}
-            {viewingChapterState.state_change_log.relationships &&
-             Object.keys(viewingChapterState.state_change_log.relationships).length > 0 && (
-              <Descriptions.Item label="关系变化">
-                <Space direction="vertical" size={4} style={{ width: '100%' }}>
-                  {Object.entries(viewingChapterState.state_change_log.relationships).map(([key, value]) => (
-                    <div key={key} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                      <Tag color="purple">{key}</Tag>
-                      <span style={{ flex: 1 }}>{String(value)}</span>
-                    </div>
-                  ))}
-                </Space>
-              </Descriptions.Item>
-            )}
-
-            {/* 时间流逝 */}
-            {viewingChapterState.state_change_log.time_passed && (
-              <Descriptions.Item label="时间流逝">
-                <Tag color="orange">{viewingChapterState.state_change_log.time_passed}</Tag>
-              </Descriptions.Item>
-            )}
-
-            {/* 章节钩子 */}
-            {viewingChapterState.state_change_log.end_hook && (
-              <Descriptions.Item label="章节钩子">
-                <Space direction="vertical" size={8} style={{ width: '100%' }}>
-                  <div>
-                    <Tag color="magenta">{viewingChapterState.state_change_log.end_hook.type}</Tag>
-                    {viewingChapterState.state_change_log.end_hook.must_respond_next && (
-                      <Tag color="red">需响应</Tag>
+              {/* 位置变化 */}
+              {stateData.location_change?.to && (
+                <Descriptions.Item label="位置变化">
+                  <Space>
+                    {stateData.location_change.from && (
+                      <>
+                        <Tag color="default">{stateData.location_change.from}</Tag>
+                        <span>→</span>
+                      </>
                     )}
-                  </div>
-                  <div style={{
-                    padding: 12,
-                    background: 'var(--color-bg-layout)',
-                    borderRadius: 4,
-                    borderLeft: '3px solid var(--color-primary)'
-                  }}>
-                    {viewingChapterState.state_change_log.end_hook.content}
-                  </div>
-                </Space>
-              </Descriptions.Item>
-            )}
-          </Descriptions>
-        )}
+                    <Tag color="blue">{stateData.location_change.to}</Tag>
+                  </Space>
+                </Descriptions.Item>
+              )}
 
-        {!viewingChapterState?.state_change_log && (
-          <Empty description="暂无状态信息" />
-        )}
+              {/* 物品获得 */}
+              {stateData.items_gained &&
+               stateData.items_gained.length > 0 && (
+                <Descriptions.Item label="获得物品">
+                  <Space wrap>
+                    {stateData.items_gained.map((item: string, index: number) => (
+                      <Tag key={index} color="green">{item}</Tag>
+                    ))}
+                  </Space>
+                </Descriptions.Item>
+              )}
+
+              {/* 物品失去 */}
+              {stateData.items_lost &&
+               stateData.items_lost.length > 0 && (
+                <Descriptions.Item label="失去物品">
+                  <Space wrap>
+                    {stateData.items_lost.map((item: string, index: number) => (
+                      <Tag key={index} color="red">{item}</Tag>
+                    ))}
+                  </Space>
+                </Descriptions.Item>
+              )}
+
+              {/* 状态变化 */}
+              {stateData.status_changes &&
+               Object.keys(stateData.status_changes).length > 0 && (
+                <Descriptions.Item label="状态变化">
+                  <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                    {Object.entries(stateData.status_changes).map(([key, value]) => (
+                      <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <Tag color="geekblue">{key}</Tag>
+                        <span>{String(value)}</span>
+                      </div>
+                    ))}
+                  </Space>
+                </Descriptions.Item>
+              )}
+
+              {/* 关系变化 */}
+              {stateData.relationships &&
+               Object.keys(stateData.relationships).length > 0 && (
+                <Descriptions.Item label="关系变化">
+                  <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                    {Object.entries(stateData.relationships).map(([key, value]) => (
+                      <div key={key} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                        <Tag color="purple">{key}</Tag>
+                        <span style={{ flex: 1 }}>{String(value)}</span>
+                      </div>
+                    ))}
+                  </Space>
+                </Descriptions.Item>
+              )}
+
+              {/* 时间流逝 */}
+              {stateData.time_passed && (
+                <Descriptions.Item label="时间流逝">
+                  <Tag color="orange">{stateData.time_passed}</Tag>
+                </Descriptions.Item>
+              )}
+
+              {/* 章节钩子 */}
+              {stateData.end_hook && (
+                <Descriptions.Item label="章节钩子">
+                  <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                    <div>
+                      <Tag color="magenta">{stateData.end_hook.type}</Tag>
+                      {stateData.end_hook.must_respond_next && (
+                        <Tag color="red">需响应</Tag>
+                      )}
+                    </div>
+                    <div style={{
+                      padding: 12,
+                      background: 'var(--color-bg-layout)',
+                      borderRadius: 4,
+                      borderLeft: '3px solid var(--color-primary)'
+                    }}>
+                      {stateData.end_hook.content}
+                    </div>
+                  </Space>
+                </Descriptions.Item>
+              )}
+            </Descriptions>
+          );
+        })()}
       </Modal>
 
       {/* 世界状态编辑器 */}

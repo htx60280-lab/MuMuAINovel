@@ -329,12 +329,18 @@ export interface Chapter {
   } | null;
   review_result?: ReviewResult | null;
   pending_state_change?: {
+    summary?: string;
     items_gained?: string[];
     items_lost?: string[];
     location_change?: { from: string | null; to: string | null };
     relationships?: Record<string, string>;
-    status_changes?: Record<string, number>;
+    status_changes?: Record<string, any>;
     time_passed?: string;
+    end_hook?: {
+      type: string;
+      content: string;
+      must_respond_next: boolean;
+    } | null;
   } | null;
   state_change_log?: {
     summary?: string;
