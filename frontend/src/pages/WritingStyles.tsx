@@ -13,6 +13,7 @@ import {
   Typography,
   Row,
   Col,
+  theme,
 } from 'antd';
 import {
   PlusOutlined,
@@ -37,6 +38,8 @@ export default function WritingStyles() {
   const [editingStyle, setEditingStyle] = useState<WritingStyle | null>(null);
   const [createForm] = Form.useForm();
   const [editForm] = Form.useForm();
+
+  const { token } = theme.useToken();
 
   const isMobile = window.innerWidth <= 768;
   
@@ -170,10 +173,10 @@ export default function WritingStyles() {
         position: 'sticky',
         top: 0,
         zIndex: 10,
-        backgroundColor: '#fff',
+        backgroundColor: token.colorBgContainer,
         padding: isMobile ? '12px 0' : '16px 0',
         marginBottom: isMobile ? 12 : 16,
-        borderBottom: '1px solid #f0f0f0',
+        borderBottom: `1px solid ${token.colorBorderSecondary}`,
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
@@ -220,7 +223,7 @@ export default function WritingStyles() {
                     display: 'flex',
                     flexDirection: 'column',
                     borderRadius: 12,
-                    border: style.is_default ? '2px solid #1890ff' : '1px solid #f0f0f0',
+                    border: style.is_default ? `2px solid ${token.colorPrimary}` : `1px solid ${token.colorBorderSecondary}`,
                   }}
                   bodyStyle={{
                     flex: 1,
@@ -235,7 +238,7 @@ export default function WritingStyles() {
                       style={{ cursor: style.is_default ? 'default' : 'pointer' }}
                     >
                       {style.is_default ? (
-                        <StarFilled style={{ color: '#faad14', fontSize: 18 }} />
+                        <StarFilled style={{ color: token.colorWarning, fontSize: 18 }} />
                       ) : (
                         <StarOutlined style={{ fontSize: 18 }} />
                       )}
@@ -246,7 +249,7 @@ export default function WritingStyles() {
                       style={{
                         fontSize: 18,
                         cursor: style.user_id === null ? 'not-allowed' : 'pointer',
-                        color: style.user_id === null ? '#ccc' : undefined
+                        color: style.user_id === null ? token.colorTextQuaternary : undefined
                       }}
                     />,
                     <Popconfirm
@@ -261,7 +264,7 @@ export default function WritingStyles() {
                       <DeleteOutlined
                         style={{
                           fontSize: 18,
-                          color: style.user_id === null ? '#ccc' : undefined,
+                          color: style.user_id === null ? token.colorTextQuaternary : undefined,
                           cursor: style.user_id === null ? 'not-allowed' : 'pointer'
                         }}
                       />
@@ -292,7 +295,7 @@ export default function WritingStyles() {
                       style={{
                         fontSize: 12,
                         marginBottom: 0,
-                        backgroundColor: '#fafafa',
+                        backgroundColor: token.colorFillAlter,
                         padding: 8,
                         borderRadius: 4,
                         flex: 1,

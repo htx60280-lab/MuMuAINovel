@@ -1,0 +1,47 @@
+﻿*** Begin Patch
+*** Update File: backend/app/api/chapters.py
+@@
+-                # 🔍 根据大纲模式选择独立的上下文构建器
++                logger.info("🛡️ 正文生成已禁用旧记忆检索，仅保留伏笔提醒和 Context Agent")
++
++                # 🔍 根据大纲模式选择独立的上下文构建器
+                 if outline_mode == 'one-to-one':
+                     # ========== 1-1模式：使用独立的简化构建器 ==========
+                     logger.info(f"🔧 [1-1模式] 使用 OneToOneContextBuilder")
+                     context_builder = OneToOneContextBuilder(
+-                        memory_service=memory_service,
++                        memory_service=None,
+                         foreshadow_service=foreshadow_service
+                     )
+@@
+                 else:
+                     # ========== 1-N模式：使用独立的完整构建器 ==========
+                     logger.info(f"🔧 [1-N模式] 使用 OneToManyContextBuilder")
+                     context_builder = OneToManyContextBuilder(
+-                        memory_service=memory_service,
++                        memory_service=None,
+                         foreshadow_service=foreshadow_service
+                     )
+@@
+-    # 🔍 根据大纲模式选择独立的上下文构建器（批量生成）
++    logger.info("🛡️ 批量正文生成已禁用旧记忆检索，仅保留伏笔提醒和 Context Agent")
++
++    # 🔍 根据大纲模式选择独立的上下文构建器（批量生成）
+     if outline_mode == 'one-to-one':
+         # 1-1模式
+         logger.info(f"🔧 批量生成 - [1-1模式] 使用 OneToOneContextBuilder")
+         context_builder = OneToOneContextBuilder(
+-            memory_service=memory_service,
++            memory_service=None,
+             foreshadow_service=foreshadow_service
+         )
+@@
+     else:
+         # 1-N模式：使用独立的完整构建器
+         logger.info(f"🔧 批量生成 - [1-N模式] 使用 OneToManyContextBuilder")
+         context_builder = OneToManyContextBuilder(
+-            memory_service=memory_service,
++            memory_service=None,
+             foreshadow_service=foreshadow_service
+         )
+*** End Patch

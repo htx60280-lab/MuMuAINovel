@@ -19,6 +19,7 @@ import {
   Col,
   Pagination,
   Dropdown,
+  theme,
 } from 'antd';
 import {
   PlusOutlined,
@@ -72,6 +73,8 @@ export default function UserManagement() {
   const [form] = Form.useForm();
   const [editForm] = Form.useForm();
   const [modal, contextHolder] = Modal.useModal();
+  const { token } = theme.useToken();
+  const alphaColor = (color: string, alpha: number) => `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
 
   // 过滤用户列表
   const filteredUsers = users.filter(user => {
@@ -180,7 +183,7 @@ export default function UserManagement() {
             <div>
               <p>用户名：<Text strong>{values.username}</Text></p>
               <p>初始密码：<Text strong copyable>{res.default_password}</Text></p>
-              <p style={{ color: '#ff4d4f', marginTop: 16 }}>
+              <p style={{ color: token.colorError, marginTop: 16 }}>
                 ⚠️ 请复制密码并告知用户，此密码仅显示一次！
               </p>
             </div>
@@ -270,7 +273,7 @@ export default function UserManagement() {
           <div>
             <p>用户：<Text strong>{currentUser.username}</Text></p>
             <p>新密码：<Text strong copyable>{res.new_password}</Text></p>
-            <p style={{ color: '#ff4d4f', marginTop: 16 }}>
+            <p style={{ color: token.colorError, marginTop: 16 }}>
               ⚠️ 请复制密码并告知用户！
             </p>
           </div>
@@ -312,7 +315,7 @@ export default function UserManagement() {
       sortOrder: sortField === 'username' ? sortOrder : null,
       render: (text: string) => (
         <Space>
-          <UserOutlined style={{ color: 'var(--color-primary)' }} />
+          <UserOutlined style={{ color: token.colorPrimary }} />
           <Text strong>{text}</Text>
         </Space>
       ),
@@ -508,7 +511,7 @@ export default function UserManagement() {
   return (
     <div style={{
       height: '100vh',
-      background: 'linear-gradient(180deg, var(--color-bg-base) 0%, #EEF2F3 100%)',
+      background: `linear-gradient(180deg, ${token.colorBgLayout} 0%, ${alphaColor(token.colorPrimary, 0.08)} 100%)`,
       padding: isMobile ? '20px 16px' : '40px 24px',
       display: 'flex',
       flexDirection: 'column',
@@ -528,9 +531,9 @@ export default function UserManagement() {
         <Card
           variant="borderless"
           style={{
-            background: 'linear-gradient(135deg, var(--color-primary) 0%, #5A9BA5 50%, var(--color-primary-hover) 100%)',
+            background: `linear-gradient(135deg, ${token.colorPrimary} 0%, ${alphaColor(token.colorPrimary, 0.8)} 50%, ${token.colorPrimaryHover} 100%)`,
             borderRadius: isMobile ? 16 : 24,
-            boxShadow: '0 12px 40px rgba(77, 128, 136, 0.25), 0 4px 12px rgba(0, 0, 0, 0.06)',
+            boxShadow: `0 12px 40px ${alphaColor(token.colorPrimary, 0.25)}, 0 4px 12px ${alphaColor(token.colorText, 0.08)}`,
             marginBottom: isMobile ? 20 : 24,
             border: 'none',
             position: 'relative',
@@ -538,18 +541,18 @@ export default function UserManagement() {
           }}
         >
           {/* 装饰性背景元素 */}
-          <div style={{ position: 'absolute', top: -60, right: -60, width: 200, height: 200, borderRadius: '50%', background: 'rgba(255, 255, 255, 0.08)', pointerEvents: 'none' }} />
-          <div style={{ position: 'absolute', bottom: -40, left: '30%', width: 120, height: 120, borderRadius: '50%', background: 'rgba(255, 255, 255, 0.05)', pointerEvents: 'none' }} />
-          <div style={{ position: 'absolute', top: '50%', right: '15%', width: 80, height: 80, borderRadius: '50%', background: 'rgba(255, 255, 255, 0.06)', pointerEvents: 'none' }} />
+          <div style={{ position: 'absolute', top: -60, right: -60, width: 200, height: 200, borderRadius: '50%', background: alphaColor(token.colorWhite, 0.08), pointerEvents: 'none' }} />
+          <div style={{ position: 'absolute', bottom: -40, left: '30%', width: 120, height: 120, borderRadius: '50%', background: alphaColor(token.colorWhite, 0.05), pointerEvents: 'none' }} />
+          <div style={{ position: 'absolute', top: '50%', right: '15%', width: 80, height: 80, borderRadius: '50%', background: alphaColor(token.colorWhite, 0.06), pointerEvents: 'none' }} />
 
           <Row align="middle" justify="space-between" gutter={[16, 16]} style={{ position: 'relative', zIndex: 1 }}>
             <Col xs={24} sm={12}>
               <Space direction="vertical" size={4}>
-                <Title level={isMobile ? 3 : 2} style={{ margin: 0, color: '#fff', textShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
-                  <TeamOutlined style={{ color: 'rgba(255,255,255,0.9)', marginRight: 12 }} />
+                <Title level={isMobile ? 3 : 2} style={{ margin: 0, color: token.colorWhite, textShadow: `0 2px 4px ${alphaColor(token.colorText, 0.2)}` }}>
+                  <TeamOutlined style={{ color: alphaColor(token.colorWhite, 0.9), marginRight: 12 }} />
                   用户管理
                 </Title>
-                <Text style={{ fontSize: isMobile ? 12 : 14, color: 'rgba(255,255,255,0.85)' }}>
+                <Text style={{ fontSize: isMobile ? 12 : 14, color: alphaColor(token.colorWhite, 0.85) }}>
                   管理系统用户和权限
                 </Text>
               </Space>
@@ -561,19 +564,19 @@ export default function UserManagement() {
                   onClick={() => navigate('/')}
                   style={{
                     borderRadius: 12,
-                    background: 'rgba(255, 255, 255, 0.15)',
-                    border: '1px solid rgba(255, 255, 255, 0.3)',
-                    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
-                    color: '#fff',
+                    background: alphaColor(token.colorWhite, 0.15),
+                    border: `1px solid ${alphaColor(token.colorWhite, 0.3)}`,
+                    boxShadow: `0 2px 8px ${alphaColor(token.colorText, 0.15)}`,
+                    color: token.colorWhite,
                     backdropFilter: 'blur(10px)',
                     transition: 'all 0.3s ease'
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.25)';
+                    e.currentTarget.style.background = alphaColor(token.colorWhite, 0.25);
                     e.currentTarget.style.transform = 'translateY(-1px)';
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
+                    e.currentTarget.style.background = alphaColor(token.colorWhite, 0.15);
                     e.currentTarget.style.transform = 'none';
                   }}
                 >
@@ -585,10 +588,10 @@ export default function UserManagement() {
                   onClick={() => setModalVisible(true)}
                   style={{
                     borderRadius: 12,
-                    background: 'rgba(255, 193, 7, 0.95)',
-                    border: '1px solid rgba(255, 255, 255, 0.3)',
-                    boxShadow: '0 4px 16px rgba(255, 193, 7, 0.4)',
-                    color: '#fff',
+                    background: alphaColor(token.colorWarning, 0.95),
+                    border: `1px solid ${alphaColor(token.colorWhite, 0.3)}`,
+                    boxShadow: `0 4px 16px ${alphaColor(token.colorWarning, 0.4)}`,
+                    color: token.colorWhite,
                     fontWeight: 600
                   }}
                 >
@@ -604,11 +607,11 @@ export default function UserManagement() {
         <Card
           variant="borderless"
           style={{
-            background: 'rgba(255, 255, 255, 0.7)',
+            background: alphaColor(token.colorBgContainer, 0.72),
             borderRadius: isMobile ? 16 : 24,
-            border: '1px solid rgba(255, 255, 255, 0.4)',
+            border: `1px solid ${alphaColor(token.colorWhite, 0.45)}`,
             backdropFilter: 'blur(20px)',
-            boxShadow: '0 4px 24px rgba(0, 0, 0, 0.04)',
+            boxShadow: `0 4px 24px ${alphaColor(token.colorText, 0.06)}`,
             flex: 1,
             display: 'flex',
             flexDirection: 'column',
@@ -625,11 +628,11 @@ export default function UserManagement() {
           {/* 搜索栏 */}
           <div style={{
             padding: '16px 24px 0 24px',
-            borderBottom: '1px solid rgba(0, 0, 0, 0.03)',
+            borderBottom: `1px solid ${alphaColor(token.colorText, 0.06)}`,
           }}>
             <Input
               placeholder="搜索用户名、显示名称或用户ID"
-              prefix={<SearchOutlined style={{ color: '#999' }} />}
+              prefix={<SearchOutlined style={{ color: token.colorTextTertiary }} />}
               value={searchText}
               onChange={(e) => {
                 setSearchText(e.target.value);
@@ -676,7 +679,7 @@ export default function UserManagement() {
           {/* 固定分页控件 */}
           <div style={{
             padding: '16px 24px 24px 24px',
-            borderTop: '1px solid rgba(0, 0, 0, 0.03)',
+            borderTop: `1px solid ${alphaColor(token.colorText, 0.06)}`,
             background: 'transparent',
             display: 'flex',
             justifyContent: 'center',

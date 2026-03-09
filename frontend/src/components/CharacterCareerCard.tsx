@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Card, Button, Modal, Form, Select, InputNumber, Input, message, Progress, Tag, Space, Divider, Typography } from 'antd';
+import { Card, Button, Modal, Form, Select, InputNumber, Input, message, Progress, Tag, Space, Divider, Typography, theme } from 'antd';
 import { EditOutlined, PlusOutlined, DeleteOutlined, TrophyOutlined } from '@ant-design/icons';
 import axios from 'axios';
 
@@ -44,6 +44,7 @@ export const CharacterCareerCard: React.FC<Props> = ({
     editable = false,
     onUpdate
 }) => {
+    const { token } = theme.useToken();
     const [mainCareer, setMainCareer] = useState<CareerDetail | null>(null);
     const [subCareers, setSubCareers] = useState<CareerDetail[]>([]);
     const [allCareers, setAllCareers] = useState<Career[]>([]);
@@ -190,7 +191,7 @@ export const CharacterCareerCard: React.FC<Props> = ({
         <div key={career.id} style={{ marginBottom: 16 }}>
             <Space style={{ width: '100%', justifyContent: 'space-between' }}>
                 <Space>
-                    <TrophyOutlined style={{ color: isMain ? '#1890ff' : '#8c8c8c' }} />
+                    <TrophyOutlined style={{ color: isMain ? token.colorPrimary : token.colorTextTertiary }} />
                     <Text strong={isMain}>{career.career_name}</Text>
                     {isMain && <Tag color="blue">主</Tag>}
                 </Space>

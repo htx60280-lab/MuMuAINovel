@@ -1,21 +1,25 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Card, Button, Modal, message, Spin, Space, Tag, Progress, Typography, Alert, Upload, Checkbox, Tooltip, Drawer, Menu } from 'antd';
-import { EditOutlined, DeleteOutlined, BookOutlined, RocketOutlined, CalendarOutlined, FileTextOutlined, TrophyOutlined, SettingOutlined, UploadOutlined, DownloadOutlined, ApiOutlined, BulbOutlined, LoadingOutlined, FileSearchOutlined, MenuUnfoldOutlined, CloseOutlined } from '@ant-design/icons';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { Card, Button, Modal, message, Spin, Space, Tag, Typography, Upload, Checkbox, Tooltip, Drawer, Menu, theme } from 'antd';
+import { EditOutlined, BookOutlined, CalendarOutlined, FileTextOutlined, TrophyOutlined, SettingOutlined, UploadOutlined, ApiOutlined, FileSearchOutlined, MenuUnfoldOutlined, MenuFoldOutlined, BulbOutlined, MoonOutlined, DesktopOutlined } from '@ant-design/icons';
 import { projectApi } from '../services/api';
 import { useStore } from '../store';
 import { useProjectSync } from '../store/hooks';
 import { eventBus, EventNames } from '../store/eventBus';
 import type { ReactNode } from 'react';
-import { cardStyles, cardHoverHandlers } from '../components/CardStyles';
+import type { Project } from '../types';
 import UserMenu from '../components/UserMenu';
 import ChangelogFloatingButton from '../components/ChangelogFloatingButton';
+import ThemeSwitch from '../components/ThemeSwitch';
+import { useThemeMode } from '../theme/useThemeMode';
 import SettingsPage from './Settings';
 import MCPPluginsPage from './MCPPlugins';
 import PromptTemplates from './PromptTemplates';
 import BookImport from './BookImport';
+import BookshelfPage from './BookshelfPage';
+import { getStoredSidebarCollapsed, setStoredSidebarCollapsed } from '../utils/sidebarState';
 
-const { Title, Text, Paragraph } = Typography;
+const { Text } = Typography;
 
 /**
  * 格式化字数显示
@@ -37,11 +41,22 @@ const formatWordCount = (count: number): string => {
   }
 };
 
+type ProjectListView = 'projects' | 'settings' | 'mcp' | 'prompts' | 'book-import';
+
+const parseViewFromSearch = (search: string): ProjectListView => {
+  const view = new URLSearchParams(search).get('view');
+  if (view === 'settings' || view === 'mcp' || view === 'prompts' || view === 'book-import' || view === 'projects') {
+    return view;
+  }
+  return 'projects';
+};
+
 export default function ProjectList() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { projects, loading } = useStore();
-  const [activeView, setActiveView] = useState<'projects' | 'settings' | 'mcp' | 'prompts' | 'book-import'>('projects');
   const [drawerVisible, setDrawerVisible] = useState(false);
+  const [collapsed, setCollapsed] = useState<boolean>(() => getStoredSidebarCollapsed());
   const [modal, contextHolder] = Modal.useModal();
   const [showApiTip, setShowApiTip] = useState(true);
   const [importModalVisible, setImportModalVisible] = useState(false);
@@ -60,13 +75,41 @@ export default function ProjectList() {
     includePlotAnalysis: false,
   });
   const { refreshProjects, deleteProject } = useProjectSync();
+  const { mode, resolvedMode, setMode } = useThemeMode();
+  const { token } = theme.useToken();
+  const alphaColor = (color: string, alpha: number) => `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
+
+  const activeView = useMemo<ProjectListView>(() => parseViewFromSearch(location.search), [location.search]);
+  const cycleThemeMode = () => {
+    const nextMode = mode === 'light' ? 'dark' : mode === 'dark' ? 'system' : 'light';
+    setMode(nextMode);
+  };
+  const collapsedThemeIcon = mode === 'light' ? <BulbOutlined /> : mode === 'dark' ? <MoonOutlined /> : <DesktopOutlined />;
+
+  const changeView = useCallback((view: ProjectListView) => {
+    const searchParams = new URLSearchParams(location.search);
+    if (view === 'projects') {
+      searchParams.delete('view');
+    } else {
+      searchParams.set('view', view);
+    }
+
+    const search = searchParams.toString();
+    navigate(
+      {
+        pathname: location.pathname,
+        search: search ? `?${search}` : '',
+      },
+      { replace: false }
+    );
+  }, [location.pathname, location.search, navigate]);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // 处理切换到 MCP 视图的事件
   const handleSwitchToMcp = useCallback(() => {
-    setActiveView('mcp');
-  }, []);
+    changeView('mcp');
+  }, [changeView]);
 
   useEffect(() => {
     refreshProjects();
@@ -94,6 +137,10 @@ export default function ProjectList() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    setStoredSidebarCollapsed(collapsed);
+  }, [collapsed]);
+
   const handleDelete = (id: string) => {
     const isMobile = window.innerWidth <= 768;
     modal.confirm({
@@ -117,8 +164,7 @@ export default function ProjectList() {
     });
   };
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const handleEnterProject = async (project: any) => {
+  const handleEnterProject = async (project: Project) => {
     if (project.wizard_status === 'incomplete') {
       navigate(`/wizard?project_id=${project.id}`);
     } else {
@@ -155,10 +201,10 @@ export default function ProjectList() {
   };
 
   const getProgressColor = (progress: number) => {
-    if (progress >= 80) return '#52c41a';
-    if (progress >= 50) return '#1890ff';
-    if (progress >= 20) return '#faad14';
-    return '#ff4d4f';
+    if (progress >= 80) return token.colorSuccess;
+    if (progress >= 50) return token.colorPrimary;
+    if (progress >= 20) return token.colorWarning;
+    return token.colorError;
   };
 
   const formatDate = (dateString: string) => {
@@ -315,410 +361,313 @@ export default function ProjectList() {
   };
 
   const isMobile = window.innerWidth <= 768;
+  const headerHeight = isMobile ? 56 : 70;
+  const expandedSiderWidth = 220;
+  const collapsedSiderWidth = 60;
+  const desktopSiderWidth = collapsed ? collapsedSiderWidth : expandedSiderWidth;
+
+  const currentViewTitle = activeView === 'projects'
+    ? '我的书架'
+    : activeView === 'prompts'
+      ? '提示词模板'
+      : activeView === 'book-import'
+        ? '拆书导入'
+        : activeView === 'mcp'
+          ? 'MCP 插件'
+          : 'API 设置';
+
+  const sideMenuItems = [
+    {
+      key: 'projects',
+      icon: <BookOutlined />,
+      label: '我的书架',
+    },
+    {
+      type: 'group' as const,
+      label: '创作工具',
+      children: [
+        {
+          key: 'book-import',
+          icon: <UploadOutlined />,
+          label: '拆书导入',
+        },
+        {
+          key: 'mcp',
+          icon: <ApiOutlined />,
+          label: 'MCP 插件',
+        },
+        {
+          key: 'prompts',
+          icon: <FileSearchOutlined />,
+          label: '提示词管理',
+        },
+      ],
+    },
+    {
+      type: 'group' as const,
+      label: '系统设置',
+      children: [
+        {
+          key: 'settings',
+          icon: <SettingOutlined />,
+          label: 'API 设置',
+        },
+      ],
+    },
+  ];
+
+  const sideMenuItemsCollapsed = [
+    {
+      key: 'projects',
+      icon: <BookOutlined />,
+      label: '我的书架',
+    },
+    {
+      key: 'book-import',
+      icon: <UploadOutlined />,
+      label: '拆书导入',
+    },
+    {
+      key: 'mcp',
+      icon: <ApiOutlined />,
+      label: 'MCP 插件',
+    },
+    {
+      key: 'prompts',
+      icon: <FileSearchOutlined />,
+      label: '提示词管理',
+    },
+    {
+      key: 'settings',
+      icon: <SettingOutlined />,
+      label: 'API 设置',
+    },
+  ];
 
   return (
     <div style={{
       height: '100vh',
       display: 'flex',
-      flexDirection: 'row', // 改为行布局，容纳侧边栏
-      background: 'var(--color-bg-base)',
+      flexDirection: 'column',
+      background: token.colorBgLayout,
       overflow: 'hidden'
     }}>
       {contextHolder}
 
-      {/* 侧边栏 - 仅桌面端显示 - 样式对齐 ProjectDetail */}
       {!isMobile && (
-        <div style={{
-          width: 220, // 对齐 ProjectDetail 的宽度
-          background: '#fff',
-          borderRight: '1px solid rgba(0,0,0,0.06)',
+        <div
+          style={{
+          width: desktopSiderWidth,
+          background: token.colorBgContainer,
+          borderRight: `1px solid ${token.colorBorderSecondary}`,
           display: 'flex',
           flexDirection: 'column',
-          zIndex: 10,
-          position: 'fixed', // 固定定位，与 ProjectDetail 一致
+          position: 'fixed',
           left: 0,
           top: 0,
           bottom: 0,
-          boxShadow: '4px 0 16px rgba(0,0,0,0.02)'
+          height: '100vh',
+          overflow: 'hidden',
+          transition: 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+          boxShadow: `4px 0 16px ${alphaColor(token.colorText, 0.06)}`,
+          zIndex: 1000
         }}>
-          {/* Logo 区域 - 保持 Primary Color 风格 */}
           <div style={{
             height: 70,
             display: 'flex',
             alignItems: 'center',
-            padding: '0 24px',
-            background: 'var(--color-primary)',
+            padding: collapsed ? 0 : '0 12px',
+            background: token.colorPrimary,
+            flexShrink: 0,
+            justifyContent: collapsed ? 'center' : 'space-between',
+            gap: 8
+          }}>
+            {collapsed ? (
+              <Button
+                type="text"
+                icon={<MenuUnfoldOutlined />}
+                onClick={() => setCollapsed(false)}
+                style={{
+                  color: token.colorWhite,
+                  width: '100%',
+                  height: '100%',
+                  padding: 0,
+                  borderRadius: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}
+              />
+            ) : (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, overflow: 'hidden' }}>
+                  <div style={{
+                    width: 30,
+                    height: 30,
+                    background: alphaColor(token.colorWhite, 0.2),
+                    borderRadius: 8,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: token.colorWhite,
+                    fontSize: 16,
+                    backdropFilter: 'blur(4px)'
+                  }}>
+                    <BookOutlined />
+                  </div>
+                  <span style={{
+                    color: token.colorWhite,
+                    fontWeight: 600,
+                    fontSize: 15,
+                    fontFamily: token.fontFamily,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis'
+                  }}>
+                    MuMuAINovel
+                  </span>
+                </div>
+                <Button
+                  type="text"
+                  icon={<MenuFoldOutlined />}
+                  onClick={() => setCollapsed(true)}
+                  style={{
+                    color: token.colorWhite,
+                    width: 32,
+                    height: 32,
+                    padding: 0,
+                    flexShrink: 0
+                  }}
+                />
+              </>
+            )}
+          </div>
+
+          <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
+            <Menu
+              mode="inline"
+              inlineCollapsed={collapsed}
+              selectedKeys={[activeView]}
+              style={{ borderRight: 0, paddingTop: 12, width: '100%' }}
+              onClick={({ key }) => {
+                changeView(key as ProjectListView);
+              }}
+              items={collapsed ? sideMenuItemsCollapsed : sideMenuItems}
+            />
+          </div>
+
+          <div style={{
+            padding: collapsed ? '12px 8px' : 16,
+            borderTop: `1px solid ${token.colorBorderSecondary}`,
             flexShrink: 0
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <div style={{
-                width: 32,
-                height: 32,
-                background: 'rgba(255, 255, 255, 0.2)',
-                borderRadius: 8,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: '#fff',
-                fontSize: 18,
-                backdropFilter: 'blur(4px)'
-              }}>
-                <BookOutlined />
-              </div>
-              <Title level={5} style={{ margin: 0, color: '#fff', fontWeight: 600 }}>
-                MuMuAINovel
-              </Title>
-            </div>
-          </div>
-
-          {/* 侧边栏菜单 - 使用 Menu 组件以保持风格一致 */}
-          <div style={{ flex: 1, overflowY: 'auto', paddingTop: 16 }}>
-             {/* 模拟 Menu 样式 */}
-             <div style={{ padding: '0 12px 12px 12px' }}>
-                <div
-                  onClick={() => setActiveView('projects')}
+            {collapsed ? (
+              <Space direction="vertical" style={{ width: '100%', alignItems: 'center' }} size={10}>
+                <Button
+                  type="text"
+                  icon={collapsedThemeIcon}
+                  onClick={cycleThemeMode}
+                  title={`主题模式：${mode === 'light' ? '浅色' : mode === 'dark' ? '深色' : '跟随系统'}（点击切换）`}
                   style={{
-                    padding: '10px 16px',
-                    fontSize: 14,
-                    cursor: 'pointer',
-                    borderRadius: 4,
-                    color: activeView === 'projects' ? 'var(--color-primary)' : 'rgba(0,0,0,0.85)',
-                    background: activeView === 'projects' ? '#e6f7ff' : 'transparent',
-                    marginBottom: 4,
-                    fontWeight: 500,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 10,
-                    transition: 'all 0.3s',
-                    borderRight: activeView === 'projects' ? '3px solid var(--color-primary)' : '3px solid transparent'
+                    width: 40,
+                    height: 40,
+                    borderRadius: 20,
+                    background: alphaColor(token.colorBgContainer, 0.65),
+                    border: `1px solid ${token.colorBorder}`,
+                    color: token.colorTextSecondary,
                   }}
-                  onMouseEnter={e => activeView !== 'projects' && (e.currentTarget.style.background = 'rgba(0,0,0,0.04)')}
-                  onMouseLeave={e => activeView !== 'projects' && (e.currentTarget.style.background = 'transparent')}
-                >
-                   <BookOutlined />
-                   我的书架
+                />
+                <UserMenu compact />
+              </Space>
+            ) : (
+              <Space direction="vertical" style={{ width: '100%' }} size={12}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, color: token.colorTextTertiary }}>
+                  <span>主题模式</span>
+                  <span>{resolvedMode === 'dark' ? '深色' : '浅色'}</span>
                 </div>
-
-                <div style={{ padding: '0 12px', fontSize: 12, color: 'rgba(0,0,0,0.45)', marginBottom: 8, marginTop: 16 }}>创作工具</div>
-                <div
-                  onClick={() => setActiveView('book-import')}
-                  style={{
-                    padding: '10px 16px',
-                    fontSize: 14,
-                    cursor: 'pointer',
-                    borderRadius: 4,
-                    color: activeView === 'book-import' ? 'var(--color-primary)' : 'rgba(0,0,0,0.85)',
-                    background: activeView === 'book-import' ? '#e6f7ff' : 'transparent',
-                    fontWeight: 500,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 10,
-                    transition: 'all 0.3s',
-                    marginBottom: 4,
-                    borderRight: activeView === 'book-import' ? '3px solid var(--color-primary)' : '3px solid transparent'
-                  }}
-                  onMouseEnter={e => activeView !== 'book-import' && (e.currentTarget.style.background = 'rgba(0,0,0,0.04)')}
-                  onMouseLeave={e => activeView !== 'book-import' && (e.currentTarget.style.background = 'transparent')}
-                >
-                   <UploadOutlined />
-                   拆书导入
-                </div>
-                <div
-                  onClick={() => setActiveView('mcp')}
-                  style={{
-                    padding: '10px 16px',
-                    fontSize: 14,
-                    cursor: 'pointer',
-                    borderRadius: 4,
-                    color: activeView === 'mcp' ? 'var(--color-primary)' : 'rgba(0,0,0,0.85)',
-                    background: activeView === 'mcp' ? '#e6f7ff' : 'transparent',
-                    fontWeight: 500,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 10,
-                    transition: 'all 0.3s',
-                    marginBottom: 4,
-                    borderRight: activeView === 'mcp' ? '3px solid var(--color-primary)' : '3px solid transparent'
-                  }}
-                  onMouseEnter={e => activeView !== 'mcp' && (e.currentTarget.style.background = 'rgba(0,0,0,0.04)')}
-                  onMouseLeave={e => activeView !== 'mcp' && (e.currentTarget.style.background = 'transparent')}
-                >
-                   <ApiOutlined />
-                   MCP 插件
-                </div>
-                <div
-                  onClick={() => setActiveView('prompts')}
-                  style={{
-                    padding: '10px 16px',
-                    fontSize: 14,
-                    cursor: 'pointer',
-                    borderRadius: 4,
-                    color: activeView === 'prompts' ? 'var(--color-primary)' : 'rgba(0,0,0,0.85)',
-                    background: activeView === 'prompts' ? '#e6f7ff' : 'transparent',
-                    fontWeight: 500,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 10,
-                    transition: 'all 0.3s',
-                    marginBottom: 4,
-                    borderRight: activeView === 'prompts' ? '3px solid var(--color-primary)' : '3px solid transparent'
-                  }}
-                  onMouseEnter={e => activeView !== 'prompts' && (e.currentTarget.style.background = 'rgba(0,0,0,0.04)')}
-                  onMouseLeave={e => activeView !== 'prompts' && (e.currentTarget.style.background = 'transparent')}
-                >
-                   <FileSearchOutlined />
-                   提示词管理
-                </div>
-
-                <div style={{ padding: '0 12px', fontSize: 12, color: 'rgba(0,0,0,0.45)', marginBottom: 8, marginTop: 16 }}>系统设置</div>
-                <div
-                  onClick={() => setActiveView('settings')}
-                  style={{
-                    padding: '10px 16px',
-                    fontSize: 14,
-                    cursor: 'pointer',
-                    borderRadius: 4,
-                    color: activeView === 'settings' ? 'var(--color-primary)' : 'rgba(0,0,0,0.85)',
-                    background: activeView === 'settings' ? '#e6f7ff' : 'transparent',
-                    fontWeight: 500,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 10,
-                    transition: 'all 0.3s',
-                    marginBottom: 4,
-                    borderRight: activeView === 'settings' ? '3px solid var(--color-primary)' : '3px solid transparent'
-                  }}
-                  onMouseEnter={e => activeView !== 'settings' && (e.currentTarget.style.background = 'rgba(0,0,0,0.04)')}
-                  onMouseLeave={e => activeView !== 'settings' && (e.currentTarget.style.background = 'transparent')}
-                >
-                   <SettingOutlined />
-                   API 设置
-                </div>
-             </div>
-          </div>
-
-          {/* 底部用户信息 */}
-          <div style={{ padding: 16, borderTop: '1px solid rgba(0,0,0,0.06)' }}>
-             <UserMenu />
+                <ThemeSwitch block />
+                <UserMenu />
+              </Space>
+            )}
           </div>
         </div>
       )}
 
-      {/* 主内容区域容器 */}
       <div style={{
-        flex: 1,
+        background: token.colorPrimary,
+        padding: isMobile ? '0 12px' : '0 24px',
         display: 'flex',
-        flexDirection: 'column',
-        height: '100%',
-        overflow: 'hidden',
-        marginLeft: isMobile ? 0 : 220 // 为固定定位的侧边栏留出空间
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        position: 'fixed',
+        top: 0,
+        left: isMobile ? 0 : desktopSiderWidth,
+        right: 0,
+        zIndex: 1000,
+        boxShadow: `0 2px 10px ${alphaColor(token.colorText, 0.16)}`,
+        height: headerHeight,
+        flexShrink: 0,
+        transition: 'left 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+        overflow: 'hidden'
       }}>
-      
-        {/* 移动端顶部导航栏 */}
-        {isMobile && (
-          <div style={{
-            flexShrink: 0,
-            background: 'var(--color-primary)',
-            boxShadow: 'var(--shadow-header)',
-            height: 56,
-            padding: '0 12px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            zIndex: 100
-          }}>
-             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Button
-                  type="text"
-                  icon={<MenuUnfoldOutlined />}
-                  onClick={() => setDrawerVisible(true)}
-                  style={{
-                    fontSize: 18,
-                    color: '#fff',
-                    width: 36,
-                    height: 36
-                  }}
-                />
-             </div>
-             
-             <span style={{
-               color: '#fff',
-               fontWeight: 600,
-               fontSize: 16,
-               flex: 1,
-               textAlign: 'center',
-               overflow: 'hidden',
-               textOverflow: 'ellipsis',
-               whiteSpace: 'nowrap',
-               paddingRight: 36  // 为了与左侧菜单按钮对称
-             }}>
-               {activeView === 'projects' ? '我的书架' :
-                activeView === 'prompts' ? '提示词模板' :
-                activeView === 'book-import' ? '拆书导入' :
-                activeView === 'mcp' ? 'MCP 插件' : 'API 设置'}
-             </span>
-          </div>
-        )}
-
-        {/* 移动端侧边栏 Drawer */}
-        {isMobile && (
-          <Drawer
-            title={
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{
-                  width: 32,
-                  height: 32,
-                  background: 'var(--color-primary)',
-                  borderRadius: 8,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: '#fff',
-                  fontSize: 16,
-                }}>
-                  <BookOutlined />
-                </div>
-                <span style={{ fontWeight: 600, fontSize: 16 }}>MuMuAINovel</span>
-              </div>
-            }
-            closeIcon={null}
-            extra={
+        {isMobile ? (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <Button
                 type="text"
-                icon={<CloseOutlined />}
-                onClick={() => setDrawerVisible(false)}
-                style={{ fontSize: 16, color: 'rgba(0,0,0,0.45)' }}
-              />
-            }
-            placement="left"
-            onClose={() => setDrawerVisible(false)}
-            open={drawerVisible}
-            width="60%"
-            styles={{ body: { padding: 0, display: 'flex', flexDirection: 'column' } }}
-          >
-            <div style={{ flex: 1, overflowY: 'auto' }}>
-              <Menu
-                mode="inline"
-                selectedKeys={[activeView]}
-                style={{ borderRight: 0, paddingTop: 8 }}
-                onClick={({ key }) => {
-                  setActiveView(key as 'projects' | 'settings' | 'mcp' | 'prompts' | 'book-import');
-                  setDrawerVisible(false);
+                icon={<MenuUnfoldOutlined />}
+                onClick={() => setDrawerVisible(true)}
+                style={{
+                  fontSize: 18,
+                  color: token.colorWhite,
+                  width: 36,
+                  height: 36
                 }}
-                items={[
-                  {
-                    key: 'projects',
-                    icon: <BookOutlined />,
-                    label: '我的书架',
-                  },
-                  {
-                    type: 'group',
-                    label: '创作工具',
-                    children: [
-                      {
-                        key: 'book-import',
-                        icon: <UploadOutlined />,
-                        label: '拆书导入',
-                      },
-                      {
-                        key: 'mcp',
-                        icon: <ApiOutlined />,
-                        label: 'MCP 插件',
-                      },
-                      {
-                        key: 'prompts',
-                        icon: <FileSearchOutlined />,
-                        label: '提示词管理',
-                      },
-                    ],
-                  },
-                  {
-                    type: 'group',
-                    label: '系统设置',
-                    children: [
-                      {
-                        key: 'settings',
-                        icon: <SettingOutlined />,
-                        label: 'API 设置',
-                      },
-                    ],
-                  },
-                ]}
               />
-              
-              {/* 导入导出操作 */}
-              <div style={{ padding: '16px', borderTop: '1px solid rgba(0,0,0,0.06)', marginTop: 16 }}>
-                <Space direction="vertical" style={{ width: '100%' }} size={8}>
-                  <Button
-                    icon={<UploadOutlined />}
-                    block
-                    onClick={() => {
-                      setImportModalVisible(true);
-                      setDrawerVisible(false);
-                    }}
-                  >
-                    导入项目
-                  </Button>
-                  <Button
-                    icon={<DownloadOutlined />}
-                    block
-                    onClick={() => {
-                      handleOpenExportModal();
-                      setDrawerVisible(false);
-                    }}
-                    disabled={exportableProjects.length === 0}
-                  >
-                    导出项目
-                  </Button>
-                </Space>
-              </div>
             </div>
-            
-            {/* 底部用户信息 */}
-            <div style={{ padding: 16, borderTop: '1px solid rgba(0,0,0,0.06)' }}>
-              <UserMenu showFullInfo />
-            </div>
-          </Drawer>
-        )}
 
-        {/* 桌面端顶部标题栏 */}
-        {!isMobile && (
-          <div style={{
-             height: 70, // 与 ProjectDetail header 高度一致
-             padding: '0 24px',
-             background: 'var(--color-primary)', // 使用主题色背景
-             boxShadow: 'var(--shadow-header)',
-             display: 'flex',
-             alignItems: 'center',
-             justifyContent: 'space-between',
-             flexShrink: 0,
-             zIndex: 100
-          }}>
-             <h2 style={{
-                margin: 0,
-                color: '#fff',
-                fontSize: '24px',
-                fontWeight: 600,
-                textShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 12
-             }}>
-                {activeView === 'projects' ? '我的书架' :
-                 activeView === 'prompts' ? '提示词模板' :
-                 activeView === 'book-import' ? '拆书导入' :
-                 activeView === 'mcp' ? 'MCP 插件' : 'API 设置'}
-             </h2>
-             
-             {activeView === 'projects' && (
-               <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
-                  {/* 导入导出按钮 */}
-                  <Space>
-                     <Button ghost icon={<UploadOutlined />} onClick={() => setImportModalVisible(true)} style={{ color: '#fff', borderColor: 'rgba(255,255,255,0.6)' }}>导入</Button>
-                     <Button ghost icon={<DownloadOutlined />} onClick={handleOpenExportModal} disabled={exportableProjects.length === 0} style={{ color: '#fff', borderColor: 'rgba(255,255,255,0.6)' }}>导出</Button>
-                  </Space>
-                  
-                  {/* 统计数据：创作中 已完结 总字数 */}
+            <h2 style={{
+              margin: 0,
+              color: token.colorWhite,
+              fontSize: 16,
+              fontWeight: 600,
+              textShadow: `0 2px 4px ${alphaColor(token.colorText, 0.2)}`,
+              flex: 1,
+              textAlign: 'center',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              paddingRight: 36
+            }}>
+              {currentViewTitle}
+            </h2>
+
+            <div style={{ width: 36, height: 36 }} />
+          </>
+        ) : (
+          <>
+            <div style={{ width: 40, zIndex: 1 }} />
+
+            <h2 style={{
+              margin: 0,
+              color: token.colorWhite,
+              fontSize: '24px',
+              fontWeight: 600,
+              textShadow: `0 2px 4px ${alphaColor(token.colorText, 0.2)}`,
+              position: 'absolute',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              maxWidth: '45%'
+            }}>
+              {currentViewTitle}
+            </h2>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16, zIndex: 1 }}>
+              {activeView === 'projects' && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
                   {projects.length > 0 && (
                     <div style={{ display: 'flex', gap: '16px' }}>
                       {[
@@ -734,28 +683,28 @@ export default function ProjectList() {
                             alignItems: 'center',
                             justifyContent: 'center',
                             backdropFilter: 'blur(4px)',
-                            borderRadius: '28px', // 圆角风格
+                            borderRadius: '28px',
                             minWidth: '56px',
                             height: '56px',
                             padding: '0 12px',
-                            boxShadow: 'inset 0 0 15px rgba(255, 255, 255, 0.15), 0 4px 10px rgba(0, 0, 0, 0.1)',
+                            boxShadow: `inset 0 0 15px ${alphaColor(token.colorWhite, 0.15)}, 0 4px 10px ${alphaColor(token.colorText, 0.1)}`,
                             cursor: 'default',
-                            transition: 'all 0.3s ease',
+                            transition: 'transform 0.3s ease, box-shadow 0.3s ease',
                           }}
                           onMouseEnter={(e) => {
                             e.currentTarget.style.transform = 'translateY(-3px) scale(1.02)';
-                            e.currentTarget.style.boxShadow = 'inset 0 0 20px rgba(255, 255, 255, 0.25), 0 8px 16px rgba(0, 0, 0, 0.15)';
-                            e.currentTarget.style.border = '1px solid rgba(255, 255, 255, 0.1)';
+                            e.currentTarget.style.boxShadow = `inset 0 0 20px ${alphaColor(token.colorWhite, 0.25)}, 0 8px 16px ${alphaColor(token.colorText, 0.15)}`;
+                            e.currentTarget.style.border = `1px solid ${alphaColor(token.colorWhite, 0.1)}`;
                           }}
                           onMouseLeave={(e) => {
                             e.currentTarget.style.transform = 'translateY(0) scale(1)';
-                            e.currentTarget.style.boxShadow = 'inset 0 0 15px rgba(255, 255, 255, 0.15), 0 4px 10px rgba(0, 0, 0, 0.1)';
+                            e.currentTarget.style.boxShadow = `inset 0 0 15px ${alphaColor(token.colorWhite, 0.15)}, 0 4px 10px ${alphaColor(token.colorText, 0.1)}`;
                           }}
                         >
-                          <span style={{ fontSize: '11px', color: 'rgba(255, 255, 255, 0.9)', marginBottom: '2px', lineHeight: 1 }}>
+                          <span style={{ fontSize: '11px', color: alphaColor(token.colorWhite, 0.9), marginBottom: '2px', lineHeight: 1 }}>
                             {item.label}
                           </span>
-                          <span style={{ fontSize: '15px', fontWeight: '600', color: '#fff', lineHeight: 1, fontFamily: 'Monaco, monospace' }}>
+                          <span style={{ fontSize: '15px', fontWeight: '600', color: token.colorWhite, lineHeight: 1, fontFamily: 'Monaco, monospace' }}>
                             {item.label === '总字数' ? formatWordCount(item.value) : item.value}
                             {item.unit && <span style={{ fontSize: '10px', marginLeft: '2px', opacity: 0.8 }}>{item.unit}</span>}
                           </span>
@@ -763,10 +712,76 @@ export default function ProjectList() {
                       ))}
                     </div>
                   )}
-               </div>
-             )}
-          </div>
+                </div>
+              )}
+            </div>
+          </>
         )}
+      </div>
+
+      {isMobile && (
+        <Drawer
+          title={
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{
+                width: 30,
+                height: 30,
+                background: token.colorPrimary,
+                borderRadius: 8,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: token.colorWhite,
+                fontSize: 16,
+              }}>
+                <BookOutlined />
+              </div>
+              <span style={{ fontWeight: 600, fontSize: 16, fontFamily: token.fontFamily }}>MuMuAINovel</span>
+            </div>
+          }
+          placement="left"
+          onClose={() => setDrawerVisible(false)}
+          open={drawerVisible}
+          width={280}
+          styles={{ body: { padding: 0, display: 'flex', flexDirection: 'column' } }}
+        >
+          <div style={{ flex: 1, overflowY: 'auto' }}>
+            <Menu
+              mode="inline"
+              selectedKeys={[activeView]}
+              style={{ borderRight: 0, paddingTop: 8 }}
+              onClick={({ key }) => {
+                changeView(key as ProjectListView);
+                setDrawerVisible(false);
+              }}
+              items={sideMenuItems}
+            />
+
+          </div>
+
+          <div style={{ padding: 16, borderTop: `1px solid ${token.colorBorderSecondary}` }}>
+            <Space direction="vertical" style={{ width: '100%' }} size={12}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, color: token.colorTextTertiary }}>
+                <span>主题模式</span>
+                <span>{resolvedMode === 'dark' ? '深色' : '浅色'}</span>
+              </div>
+              <ThemeSwitch block />
+              <UserMenu showFullInfo />
+            </Space>
+          </div>
+        </Drawer>
+      )}
+
+      <div style={{
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        overflow: 'hidden',
+        marginLeft: isMobile ? 0 : desktopSiderWidth,
+        marginTop: headerHeight,
+        transition: 'margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
+      }}>
 
         {/* 内容显示区 */}
         <div
@@ -774,355 +789,42 @@ export default function ProjectList() {
           style={{
             flex: 1,
             overflowY: 'auto',
-            padding: (activeView === 'projects' || activeView === 'book-import')
-              ? `${isMobile ? 16 : 24}px ${isMobile ? 16 : 32}px`
+            padding: activeView === 'projects'
+              ? (isMobile ? '20px 16px 70px' : '24px 24px 70px')
               : 0,
-            background: 'var(--color-bg-base)',
+            background: activeView === 'projects'
+              ? `linear-gradient(180deg, ${alphaColor(token.colorPrimary, 0.04)} 0%, ${token.colorBgLayout} 26%)`
+              : token.colorBgLayout,
           }}
         >
           {activeView === 'settings' && <SettingsPage />}
           {activeView === 'mcp' && <MCPPluginsPage />}
           {activeView === 'prompts' && <PromptTemplates />}
           
-          {activeView === 'book-import' && (
-            <div style={{ maxWidth: 1200, margin: '0 auto', paddingBottom: 60 }}>
-              <BookImport />
-            </div>
-          )}
+          {activeView === 'book-import' && <BookImport />}
           
           {activeView === 'projects' && (
-            <div style={{ maxWidth: 1600, margin: '0 auto', paddingBottom: 60 }}>
-            
-            {showApiTip && projects.length === 0 && (
-              <Alert
-                message="欢迎使用 MuMuAINovel"
-                description={
-                  <div style={{
-                    display: 'flex',
-                    flexDirection: isMobile ? 'column' : 'row',
-                    alignItems: isMobile ? 'flex-start' : 'center',
-                    gap: isMobile ? 12 : 16,
-                    justifyContent: 'space-between'
-                  }}>
-                    <span style={{ fontSize: isMobile ? 12 : 14 }}>
-                      在开始创作之前，请先配置您的AI接口（支持 OpenAI / Anthropic）。
-                    </span>
-                    <Button
-                      size="small"
-                      type="primary"
-                      onClick={() => setActiveView('settings')}
-                      style={{ flexShrink: 0 }}
-                    >
-                      去配置
-                    </Button>
-                  </div>
-                }
-                type="info"
-                showIcon
-                closable
-                onClose={() => setShowApiTip(false)}
-                style={{
-                  marginBottom: isMobile ? 16 : 24,
-                  borderRadius: 12
-                }}
-              />
-            )}
-
-            <Spin spinning={loading}>
-              <div style={{
-                ...cardStyles.bookshelf,
-                // 移动端显示一列
-                ...(isMobile && {
-                  gridTemplateColumns: '1fr',
-                  gap: '16px',
-                  padding: '16px 0',
-                })
-              }}>
-                {/* 新建/灵感卡片 */}
-                <div style={{ position: 'relative', width: '100%', minWidth: 0, minHeight: isMobile ? 300 : 330 }}>
-                  <Card
-                    hoverable
-                    style={{ ...cardStyles.newProjectBook, minHeight: isMobile ? 300 : 330 }}
-                    styles={{ body: { padding: isMobile ? '16px' : '24px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' } }}
-                    {...cardHoverHandlers}
-                    data-type="new-project"
-                  >
-                      <div style={{
-                        width: '100%',
-                        height: '100%',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: isMobile ? 10 : 16,
-                        justifyContent: 'center'
-                      }}>
-                        <Button
-                          type="primary"
-                          size={isMobile ? 'middle' : 'large'}
-                          icon={<RocketOutlined />}
-                          onClick={() => navigate('/wizard')}
-                          style={{ height: isMobile ? '38px' : '50px', fontSize: isMobile ? '14px' : '16px' }}
-                          block
-                        >
-                          快速开始
-                        </Button>
-                        <Button
-                          size={isMobile ? 'middle' : 'large'}
-                          icon={<BulbOutlined />}
-                          onClick={() => navigate('/inspiration')}
-                          style={{
-                            height: isMobile ? '38px' : '50px',
-                            fontSize: isMobile ? '14px' : '16px',
-                            borderColor: '#faad14',
-                            color: '#faad14',
-                            background: 'rgba(250, 173, 20, 0.1)'
-                          }}
-                          block
-                        >
-                          灵感模式
-                        </Button>
-                        <div style={{ textAlign: 'center', color: '#999', fontSize: isMobile ? 11 : 12, marginTop: isMobile ? 4 : 8 }}>
-                            开始一个新的创作旅程
-                        </div>
-                      </div>
-                  </Card>
-                </div>
-
-                {Array.isArray(projects) && projects.map((project) => {
-                    const progress = getProgress(project.current_words, project.target_words || 0);
-                    const isWizardIncomplete = project.wizard_status === 'incomplete';
-                    // 解析标签（假设存储在 genre 字段，用逗号或顿号分隔）
-                    const tags = project.genre ? project.genre.split(/[,、，]/).map((t: string) => t.trim()).filter((t: string) => t) : [];
-
-                    return (
-                      <div key={project.id} style={{ position: 'relative', width: '100%', minWidth: 0 }}>
-                        <Card
-                          hoverable
-                          style={cardStyles.project}
-                          styles={{ body: { padding: 0, flex: 1, display: 'flex', flexDirection: 'column' } }}
-                          {...cardHoverHandlers}
-                          onClick={() => handleEnterProject(project)}
-                        >
-                          {/* 卡片头部 - 参考图片样式 */}
-                          <div style={{
-                            padding: isMobile ? '14px 14px 10px' : '18px 20px 14px',
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'flex-start',
-                            position: 'relative'
-                          }}>
-                            <div style={{ flex: 1, minWidth: 0, marginRight: isMobile ? 8 : 12 }}>
-                              {/* 标题行：图标 + 标题 */}
-                              <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 6 : 8, marginBottom: isMobile ? 6 : 10 }}>
-                                <BookOutlined style={{
-                                  fontSize: isMobile ? 14 : 16,
-                                  color: 'var(--color-primary)',
-                                  flexShrink: 0
-                                }} />
-                                <Tooltip title={project.title}>
-                                  <div style={{
-                                    fontSize: isMobile ? 14 : 16,
-                                    fontWeight: 600,
-                                    color: 'var(--color-text-primary)',
-                                    whiteSpace: 'nowrap',
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                    lineHeight: 1.3
-                                  }}>
-                                    {project.title}
-                                  </div>
-                                </Tooltip>
-                              </div>
-                              {/* 标签行 - 单行不换行 */}
-                              <div style={{
-                                  display: 'flex',
-                                  gap: isMobile ? 4 : 6,
-                                  overflow: 'hidden',
-                                  flexWrap: 'nowrap'
-                              }}>
-                                {tags.length > 0 ? tags.slice(0, 3).map((tag: string, idx: number) => (
-                                  <Tag key={idx} style={{
-                                      margin: 0,
-                                      fontSize: isMobile ? 10 : 11,
-                                      lineHeight: isMobile ? '18px' : '20px',
-                                      padding: isMobile ? '0 6px' : '0 8px',
-                                      border: 'none',
-                                      borderRadius: 4,
-                                      background: 'rgba(82, 196, 26, 0.1)',
-                                      color: '#52c41a',
-                                      fontWeight: 500
-                                  }}>
-                                      {tag}
-                                  </Tag>
-                                )) : (
-                                  <Tag style={{
-                                      margin: 0,
-                                      fontSize: isMobile ? 10 : 11,
-                                      lineHeight: isMobile ? '18px' : '20px',
-                                      padding: isMobile ? '0 6px' : '0 8px',
-                                      border: 'none',
-                                      borderRadius: 4,
-                                      background: 'rgba(82, 196, 26, 0.1)',
-                                      color: '#52c41a',
-                                      fontWeight: 500
-                                  }}>
-                                      未分类
-                                  </Tag>
-                                )}
-                              </div>
-                            </div>
-                            
-                            {/* 右上角状态标签 - 带文字和图标 */}
-                            <div style={{ flexShrink: 0 }}>
-                               {isWizardIncomplete ? (
-                                  <Tag
-                                    color="warning"
-                                    icon={<LoadingOutlined />}
-                                    style={{
-                                      margin: 0,
-                                      borderRadius: 4,
-                                      fontSize: isMobile ? 10 : 12,
-                                      padding: isMobile ? '0 6px' : '2px 10px',
-                                      fontWeight: 500
-                                    }}
-                                  >
-                                    生成中
-                                  </Tag>
-                                ) : (
-                                  getStatusTag(getDisplayStatus(project.status, progress))
-                                )}
-                            </div>
-                          </div>
-
-                          {/* 描述区域 */}
-                          <div style={{ padding: isMobile ? '0 14px 10px' : '0 20px 14px' }}>
-                             <Paragraph
-                               ellipsis={{ rows: isMobile ? 2 : 2 }}
-                               style={{
-                                 fontSize: isMobile ? 12 : 13,
-                                 color: 'var(--color-text-secondary)',
-                                 marginBottom: 0,
-                                 lineHeight: 1.6
-                               }}
-                             >
-                               {project.description || '暂无描述...'}
-                             </Paragraph>
-                          </div>
-
-                          {/* 进度条区域 */}
-                          <div style={{ padding: isMobile ? '0 14px 12px' : '0 20px 16px' }}>
-                             <div style={{
-                               display: 'flex',
-                               justifyContent: 'space-between',
-                               alignItems: 'center',
-                               marginBottom: isMobile ? 6 : 8
-                             }}>
-                                <span style={{
-                                  fontSize: isMobile ? 11 : 12,
-                                  color: 'var(--color-text-tertiary)'
-                                }}>
-                                  完成进度
-                                </span>
-                                <span style={{
-                                  fontSize: isMobile ? 11 : 12,
-                                  color: getProgressColor(progress),
-                                  fontWeight: 600
-                                }}>
-                                  {progress}%
-                                </span>
-                             </div>
-                             <Progress
-                                percent={progress}
-                                showInfo={false}
-                                strokeColor={getProgressColor(progress)}
-                                trailColor="rgba(0, 0, 0, 0.04)"
-                                size="small"
-                                style={{ marginBottom: 0 }}
-                             />
-                          </div>
-
-                          {/* 字数统计区域 */}
-                          <div style={{
-                            padding: isMobile ? '12px 14px' : '16px 20px',
-                            background: 'rgba(0, 0, 0, 0.02)',
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center'
-                          }}>
-                             <div style={{ textAlign: 'center', flex: 1 }}>
-                               <div style={{
-                                   fontSize: isMobile ? 18 : 22,
-                                   fontWeight: 700,
-                                   color: 'var(--color-text-primary)',
-                                   lineHeight: 1.2,
-                                   fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial'
-                               }}>
-                                 {formatWordCount(project.current_words || 0)}
-                               </div>
-                               <div style={{
-                                 fontSize: isMobile ? 10 : 11,
-                                 color: 'var(--color-text-tertiary)',
-                                 marginTop: 2
-                               }}>
-                                 已写字数
-                               </div>
-                             </div>
-                             <div style={{
-                               width: 1,
-                               height: isMobile ? 28 : 36,
-                               background: 'rgba(0, 0, 0, 0.06)'
-                             }} />
-                             <div style={{ textAlign: 'center', flex: 1 }}>
-                               <div style={{
-                                   fontSize: isMobile ? 18 : 22,
-                                   fontWeight: 700,
-                                   color: '#52c41a',
-                                   lineHeight: 1.2,
-                                   fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial'
-                               }}>
-                                 {formatWordCount(project.target_words || 0)}
-                               </div>
-                               <div style={{
-                                 fontSize: isMobile ? 10 : 11,
-                                 color: 'var(--color-text-tertiary)',
-                                 marginTop: 2
-                               }}>
-                                 目标字数
-                               </div>
-                             </div>
-                          </div>
-
-                          {/* 卡片底部 - 时间和操作 */}
-                          <div style={{
-                            padding: isMobile ? '10px 14px' : '12px 20px',
-                            borderTop: '1px solid rgba(0,0,0,0.04)',
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center',
-                            marginTop: 'auto'
-                          }}>
-                             <Space size={4} style={{ fontSize: isMobile ? 11 : 12, color: 'var(--color-text-tertiary)' }}>
-                               <CalendarOutlined style={{ fontSize: isMobile ? 10 : 12 }} /> {formatDate(project.updated_at)}
-                             </Space>
-                             
-                             <Button
-                                type="text"
-                                size="small"
-                                danger
-                                icon={<DeleteOutlined style={{ fontSize: isMobile ? 12 : 14 }} />}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDelete(project.id);
-                                }}
-                                style={{ padding: isMobile ? '2px 4px' : '4px 8px' }}
-                             />
-                          </div>
-                        </Card>
-                      </div>
-                    );
-                  })}
-                </div>
-            </Spin>
-          </div>
+            <BookshelfPage
+              isMobile={isMobile}
+              loading={loading}
+              projects={projects}
+              showApiTip={showApiTip}
+              setShowApiTip={setShowApiTip}
+              exportableProjectsCount={exportableProjects.length}
+              onOpenImportModal={() => setImportModalVisible(true)}
+              onOpenExportModal={handleOpenExportModal}
+              onGoSettings={() => changeView('settings')}
+              onStartWizard={() => navigate('/wizard')}
+              onOpenInspiration={() => navigate('/inspiration')}
+              onEnterProject={handleEnterProject}
+              onDeleteProject={handleDelete}
+              formatWordCount={formatWordCount}
+              getProgress={getProgress}
+              getProgressColor={getProgressColor}
+              getDisplayStatus={getDisplayStatus}
+              getStatusTag={getStatusTag}
+              formatDate={formatDate}
+            />
           )}
         
         <ChangelogFloatingButton />
@@ -1144,7 +846,7 @@ export default function ProjectList() {
       >
         <Space direction="vertical" size={16} style={{ width: '100%' }}>
           <div>
-            <p style={{ marginBottom: '12px', color: '#666' }}>
+            <p style={{ marginBottom: '12px', color: token.colorTextSecondary }}>
               选择之前导出的 JSON 格式项目文件
             </p>
             <Upload
@@ -1169,10 +871,10 @@ export default function ProjectList() {
           )}
 
           {validationResult && (
-            <Card size="small" style={{ background: validationResult.valid ? '#f6ffed' : '#fff2f0' }}>
+            <Card size="small" style={{ background: validationResult.valid ? token.colorSuccessBg : token.colorErrorBg }}>
               <Space direction="vertical" size={8} style={{ width: '100%' }}>
                 <div>
-                  <Text strong style={{ color: validationResult.valid ? '#52c41a' : '#ff4d4f' }}>
+                  <Text strong style={{ color: validationResult.valid ? token.colorSuccess : token.colorError }}>
                     {validationResult.valid ? '✓ 文件验证通过' : '✗ 文件验证失败'}
                   </Text>
                 </div>
@@ -1204,7 +906,7 @@ export default function ProjectList() {
                 {validationResult.warnings?.length > 0 && (
                    <div style={{ marginTop: 8 }}>
                      <Text type="warning" strong style={{ fontSize: 12 }}>提示：</Text>
-                     <ul style={{ margin: '4px 0 0 0', paddingLeft: 20, color: '#faad14', fontSize: 12 }}>
+                     <ul style={{ margin: '4px 0 0 0', paddingLeft: 20, color: token.colorWarning, fontSize: 12 }}>
                        {validationResult.warnings.map((w: string, i: number) => <li key={i}>{w}</li>)}
                      </ul>
                    </div>
@@ -1212,7 +914,7 @@ export default function ProjectList() {
                 {validationResult.errors?.length > 0 && (
                    <div>
                      <Text type="danger" strong>错误：</Text>
-                     <ul style={{ margin: '4px 0 0 0', paddingLeft: 20, color: '#ff4d4f', fontSize: 13 }}>
+                     <ul style={{ margin: '4px 0 0 0', paddingLeft: 20, color: token.colorError, fontSize: 13 }}>
                        {validationResult.errors.map((e: string, i: number) => <li key={i}>{e}</li>)}
                      </ul>
                    </div>
@@ -1237,7 +939,7 @@ export default function ProjectList() {
         okButtonProps={{ disabled: selectedProjectIds.length === 0 }}
       >
          <Space direction="vertical" size={16} style={{ width: '100%' }}>
-            <Card size="small" style={{ background: '#f5f5f5' }}>
+            <Card size="small" style={{ background: token.colorFillTertiary }}>
               <Space direction="vertical" size={12} style={{ width: '100%' }}>
                 <Text strong>导出选项</Text>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 24px' }}>
@@ -1267,14 +969,14 @@ export default function ProjectList() {
                     全选
                   </Checkbox>
                </div>
-               <div style={{ maxHeight: 300, overflowY: 'auto', border: '1px solid #f0f0f0', borderRadius: 8, padding: 8 }}>
+               <div style={{ maxHeight: 300, overflowY: 'auto', border: `1px solid ${token.colorBorderSecondary}`, borderRadius: 8, padding: 8 }}>
                   <Space direction="vertical" style={{ width: '100%' }}>
                     {exportableProjects.map(p => (
                       <div 
                         key={p.id}
                         style={{ 
                           padding: '8px 12px', 
-                          background: selectedProjectIds.includes(p.id) ? '#e6f7ff' : '#fff',
+                          background: selectedProjectIds.includes(p.id) ? token.colorPrimaryBg : token.colorBgContainer,
                           borderRadius: 6,
                           cursor: 'pointer',
                           display: 'flex',
@@ -1286,7 +988,7 @@ export default function ProjectList() {
                         <Checkbox checked={selectedProjectIds.includes(p.id)} />
                         <div style={{ flex: 1 }}>
                            <div>{p.title}</div>
-                           <div style={{ fontSize: 12, color: '#999' }}>{formatWordCount(p.current_words || 0)} 字 · {getStatusTag(getDisplayStatus(p.status, getProgress(p.current_words || 0, p.target_words || 0)))}</div>
+                           <div style={{ fontSize: 12, color: token.colorTextTertiary }}>{formatWordCount(p.current_words || 0)} 字 · {getStatusTag(getDisplayStatus(p.status, getProgress(p.current_words || 0, p.target_words || 0)))}</div>
                         </div>
                       </div>
                     ))}

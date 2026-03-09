@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Modal, Input, Button, Space, Radio, InputNumber, Card, message, Alert, Spin, Typography, Divider } from 'antd';
+import { Modal, Input, Button, Space, Radio, InputNumber, Card, message, Alert, Spin, Typography, Divider, theme } from 'antd';
 import { ThunderboltOutlined, CheckOutlined, ReloadOutlined, EditOutlined, LoadingOutlined } from '@ant-design/icons';
 import { chapterApi } from '../services/api';
 
@@ -35,6 +35,7 @@ export const PartialRegenerateModal: React.FC<PartialRegenerateModalProps> = ({
   onClose,
   onApply,
 }) => {
+  const { token } = theme.useToken();
   const [userInstructions, setUserInstructions] = useState('');
   const [lengthMode, setLengthMode] = useState<LengthMode>('similar');
   const [customWordCount, setCustomWordCount] = useState<number>(selectedText.length);
@@ -182,7 +183,7 @@ export const PartialRegenerateModal: React.FC<PartialRegenerateModalProps> = ({
     <Modal
       title={
         <Space>
-          <EditOutlined style={{ color: 'var(--color-primary)' }} />
+          <EditOutlined style={{ color: token.colorPrimary }} />
           <span>AI局部重写</span>
         </Space>
       }
@@ -206,9 +207,9 @@ export const PartialRegenerateModal: React.FC<PartialRegenerateModalProps> = ({
               loading={isGenerating}
               disabled={!userInstructions.trim()}
               style={{
-                background: 'linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-hover) 100%)',
+                background: `linear-gradient(135deg, ${token.colorPrimary} 0%, ${token.colorPrimaryHover} 100%)`,
                 border: 'none',
-                boxShadow: '0 4px 12px rgba(77, 128, 136, 0.3)',
+                boxShadow: token.boxShadowSecondary,
               }}
             >
               {isGenerating ? '生成中...' : '开始重写'}
@@ -225,7 +226,7 @@ export const PartialRegenerateModal: React.FC<PartialRegenerateModalProps> = ({
                 type="primary"
                 icon={<CheckOutlined />}
                 onClick={handleAccept}
-                style={{ background: '#52c41a', borderColor: '#52c41a' }}
+                style={{ background: token.colorSuccess, borderColor: token.colorSuccess }}
               >
                 接受并应用
               </Button>
@@ -254,7 +255,7 @@ export const PartialRegenerateModal: React.FC<PartialRegenerateModalProps> = ({
           body: {
             maxHeight: 150,
             overflowY: 'auto',
-            background: '#fafafa',
+            background: token.colorFillAlter,
           },
         }}
       >
@@ -262,7 +263,7 @@ export const PartialRegenerateModal: React.FC<PartialRegenerateModalProps> = ({
           style={{
             margin: 0,
             whiteSpace: 'pre-wrap',
-            color: '#595959',
+            color: token.colorText,
             lineHeight: 1.8,
           }}
         >
@@ -356,7 +357,7 @@ export const PartialRegenerateModal: React.FC<PartialRegenerateModalProps> = ({
               <div
                 style={{
                   height: 4,
-                  background: '#f0f0f0',
+                  background: token.colorFillTertiary,
                   borderRadius: 2,
                   overflow: 'hidden',
                 }}
@@ -364,7 +365,7 @@ export const PartialRegenerateModal: React.FC<PartialRegenerateModalProps> = ({
                 <div
                   style={{
                     height: '100%',
-                    background: 'linear-gradient(90deg, var(--color-primary) 0%, var(--color-primary-hover) 100%)',
+                    background: `linear-gradient(90deg, ${token.colorPrimary} 0%, ${token.colorPrimaryHover} 100%)`,
                     width: `${progress}%`,
                     transition: 'width 0.3s ease',
                     borderRadius: 2,
@@ -378,8 +379,8 @@ export const PartialRegenerateModal: React.FC<PartialRegenerateModalProps> = ({
             size="small"
             ref={generatedTextRef}
             style={{
-              background: generatedText ? '#f6ffed' : '#fafafa',
-              border: generatedText ? '1px solid #b7eb8f' : '1px solid #d9d9d9',
+              background: generatedText ? token.colorSuccessBg : token.colorFillAlter,
+              border: generatedText ? `1px solid ${token.colorSuccessBorder}` : `1px solid ${token.colorBorder}`,
             }}
             styles={{
               body: {
@@ -404,7 +405,7 @@ export const PartialRegenerateModal: React.FC<PartialRegenerateModalProps> = ({
                       display: 'inline-block',
                       width: 8,
                       height: 16,
-                      background: 'var(--color-primary)',
+                      background: token.colorPrimary,
                       marginLeft: 2,
                       animation: 'blink 1s infinite',
                     }}
@@ -412,7 +413,7 @@ export const PartialRegenerateModal: React.FC<PartialRegenerateModalProps> = ({
                 )}
               </Paragraph>
             ) : (
-              <div style={{ textAlign: 'center', padding: 20, color: '#8c8c8c' }}>
+              <div style={{ textAlign: 'center', padding: 20, color: token.colorTextTertiary }}>
                 {isGenerating ? '正在生成内容...' : '等待生成...'}
               </div>
             )}

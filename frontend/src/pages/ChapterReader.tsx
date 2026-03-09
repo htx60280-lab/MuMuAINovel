@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Card, Spin, Alert, Button, Space, Switch, Drawer, message, Progress } from 'antd';
+import { Card, Spin, Alert, Button, Space, Switch, Drawer, message, Progress, theme } from 'antd';
 import {
   ArrowLeftOutlined,
   EyeOutlined,
@@ -63,6 +63,8 @@ interface NavigationData {
 const ChapterReader: React.FC = () => {
   const { chapterId } = useParams<{ chapterId: string }>();
   const navigate = useNavigate();
+
+  const { token } = theme.useToken();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -303,7 +305,7 @@ const ChapterReader: React.FC = () => {
                   checkedChildren={<EyeOutlined />}
                   unCheckedChildren={<EyeInvisibleOutlined />}
                 />
-                <span style={{ fontSize: 13, color: '#666' }}>显示标注</span>
+                <span style={{ fontSize: 13, color: token.colorTextSecondary }}>显示标注</span>
                 <Button
                   icon={<MenuOutlined />}
                   onClick={() => setSidebarVisible(true)}
@@ -319,14 +321,14 @@ const ChapterReader: React.FC = () => {
         {analyzing && (
           <div style={{ marginTop: 12 }}>
             <Progress percent={analysisProgress} size="small" status="active" />
-            <span style={{ fontSize: 12, color: '#666', marginLeft: 8 }}>
+            <span style={{ fontSize: 12, color: token.colorTextSecondary, marginLeft: 8 }}>
               正在分析章节...
             </span>
           </div>
         )}
 
         {!analyzing && hasAnnotations && annotationsData && (
-          <div style={{ marginTop: 12, fontSize: 12, color: '#999' }}>
+          <div style={{ marginTop: 12, fontSize: 12, color: token.colorTextTertiary }}>
             共有 {annotationsData.summary.total_annotations} 个标注：
             {annotationsData.summary.hooks > 0 && ` 🎣${annotationsData.summary.hooks}个钩子`}
             {annotationsData.summary.foreshadows > 0 &&
@@ -383,7 +385,7 @@ const ChapterReader: React.FC = () => {
               )}
 
               {/* 底部翻页按钮 */}
-              <div style={{ marginTop: 48, paddingTop: 24, borderTop: '1px solid #f0f0f0' }}>
+              <div style={{ marginTop: 48, paddingTop: 24, borderTop: `1px solid ${token.colorBorderSecondary}` }}>
                 <Space style={{ width: '100%', justifyContent: 'space-between' }}>
                   <Button
                     size="large"
@@ -418,9 +420,9 @@ const ChapterReader: React.FC = () => {
           <div
             style={{
               width: 400,
-              borderLeft: '1px solid #f0f0f0',
+              borderLeft: `1px solid ${token.colorBorderSecondary}`,
               overflowY: 'auto',
-              background: '#fafafa',
+              background: token.colorBgLayout,
             }}
           >
             <MemorySidebar

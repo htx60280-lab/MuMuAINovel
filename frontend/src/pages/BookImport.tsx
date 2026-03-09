@@ -11,6 +11,7 @@ import {
   InputNumber,
   List,
   message,
+  Popconfirm,
   Progress,
   Row,
   Select,
@@ -20,6 +21,7 @@ import {
   Tag,
   Typography,
   Upload,
+  theme,
 } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
 import { InboxOutlined, PlayCircleOutlined, ReloadOutlined, StopOutlined, WarningOutlined, RedoOutlined } from '@ant-design/icons';
@@ -31,7 +33,7 @@ import type {
   BookImportTask,
 } from '../types';
 
-const { Text } = Typography;
+const { Text, Title } = Typography;
 const { Dragger } = Upload;
 const { TextArea } = Input;
 
@@ -106,6 +108,8 @@ function isNotFoundError(error: unknown): boolean {
 
 export default function BookImport() {
   const navigate = useNavigate();
+  const { token } = theme.useToken();
+  const isMobile = window.innerWidth <= 768;
   const [file, setFile] = useState<File | null>(null);
 
   const [taskId, setTaskId] = useState<string | null>(null);
@@ -139,6 +143,40 @@ export default function BookImport() {
     if (preview) return 2;
     return 1;
   }, [taskId, taskStatus, preview, applying, isApplyComplete]);
+
+  const canRestart = useMemo(() => {
+    return Boolean(
+      file ||
+      taskId ||
+      taskStatus ||
+      preview ||
+      applyProgress > 0 ||
+      applyMessage ||
+      applyError ||
+      isApplyComplete ||
+      failedSteps.length > 0 ||
+      retrying
+    );
+  }, [
+    file,
+    taskId,
+    taskStatus,
+    preview,
+    applyProgress,
+    applyMessage,
+    applyError,
+    isApplyComplete,
+    failedSteps,
+    retrying,
+  ]);
+
+  const stepItems = [
+    { title: '上传文件' },
+    { title: '解析中' },
+    { title: '预览修改' },
+    { title: '生成导入' },
+  ];
+  const currentStepText = stepItems[currentStep]?.title || '上传文件';
 
   useEffect(() => {
     const cache = loadBookImportCache();
@@ -487,6 +525,31 @@ export default function BookImport() {
     }
   }, [navigate]);
 
+  const restartImport = useCallback(() => {
+    clearBookImportCache();
+    importedProjectId.current = null;
+
+    setFile(null);
+    setTaskId(null);
+    setTaskStatus(null);
+    setPreview(null);
+
+    setCreatingTask(false);
+    setLoadingPreview(false);
+    setApplying(false);
+    setApplyProgress(0);
+    setApplyMessage('');
+    setApplyError(null);
+    setIsApplyComplete(false);
+
+    setFailedSteps([]);
+    setRetrying(false);
+    setRetryProgress(0);
+    setRetryMessage('');
+
+    message.success('已重新开始，请重新上传 TXT 并解析');
+  }, []);
+
   const updateChapter = (index: number, patch: Partial<BookImportPreview['chapters'][number]>) => {
     setPreview(prev => {
       if (!prev) return prev;
@@ -497,18 +560,100 @@ export default function BookImport() {
   };
 
   return (
-    <div style={{ height: '100%', overflow: 'auto', paddingRight: 8 }}>
-      <Card style={{ marginBottom: 16 }}>
-        <Steps
-          current={currentStep}
-          items={[
-            { title: '上传文件' },
-            { title: '解析中' },
-            { title: '预览修改' },
-            { title: '生成导入' },
-          ]}
-        />
-      </Card>
+    <div
+      style={{
+        minHeight: '90vh',
+        overflow: 'auto',
+        background: `linear-gradient(180deg, ${token.colorBgLayout} 0%, ${token.colorFillSecondary} 100%)`,
+        padding: isMobile ? '20px 16px 70px' : '24px 24px 70px',
+      }}
+    >
+      <div style={{ maxWidth: 1400, margin: '0 auto', width: '100%' }}>
+        <Card
+          variant="borderless"
+          style={{
+            background: `linear-gradient(135deg, ${token.colorPrimary} 0%, ${token.colorPrimaryHover} 100%)`,
+            borderRadius: isMobile ? 16 : 20,
+            boxShadow: token.boxShadowSecondary,
+            marginBottom: isMobile ? 14 : 16,
+            border: 'none',
+            position: 'relative',
+            overflow: 'hidden',
+          }}
+        >
+          <div style={{ position: 'absolute', top: -48, right: -48, width: 160, height: 160, borderRadius: '50%', background: token.colorWhite, opacity: 0.08, pointerEvents: 'none' }} />
+          <div style={{ position: 'absolute', bottom: -40, left: '26%', width: 110, height: 110, borderRadius: '50%', background: token.colorWhite, opacity: 0.05, pointerEvents: 'none' }} />
+
+          <Row align="middle" justify="space-between" gutter={[16, 16]} style={{ position: 'relative', zIndex: 1 }}>
+            <Col xs={24} sm={12}>
+              <Space direction="vertical" size={4}>
+                <Title level={isMobile ? 3 : 2} style={{ margin: 0, color: token.colorWhite, textShadow: `0 2px 4px ${token.colorBgMask}` }}>
+                  <InboxOutlined style={{ color: token.colorWhite, opacity: 0.9, marginRight: 8 }} />
+                  拆书导入
+                </Title>
+                <Text style={{ fontSize: isMobile ? 12 : 14, color: token.colorTextLightSolid, opacity: 0.85, marginLeft: isMobile ? 40 : 48 }}>
+                  上传TXT并自动解析为章节、预览并导入项目
+                </Text>
+              </Space>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Space
+                size={12}
+                style={{
+                  width: '100%',
+                  display: 'flex',
+                  justifyContent: isMobile ? 'flex-start' : 'flex-end',
+                }}
+              >
+                <Tag
+                  style={{
+                    marginInlineEnd: 0,
+                    background: token.colorWhite,
+                    border: `1px solid ${token.colorWhite}`,
+                    color: token.colorPrimary,
+                    fontWeight: 600,
+                    borderRadius: 8,
+                    paddingInline: 10,
+                  }}
+                >
+                  当前进度：{currentStepText}
+                </Tag>
+                <Popconfirm
+                  title="确认重新开始？"
+                  description="将清空当前拆书任务与缓存，并回到上传文件步骤。"
+                  onConfirm={restartImport}
+                  okText="重新开始"
+                  cancelText="取消"
+                  disabled={!canRestart}
+                >
+                  <Button
+                    danger
+                    type="primary"
+                    icon={<ReloadOutlined />}
+                    disabled={!canRestart}
+                    style={{ boxShadow: '0 6px 16px rgba(0, 0, 0, 0.2)', borderRadius: 10 }}
+                  >
+                    重新开始
+                  </Button>
+                </Popconfirm>
+              </Space>
+            </Col>
+          </Row>
+
+          <Card
+            variant="borderless"
+            style={{
+              marginTop: isMobile ? 14 : 18,
+              borderRadius: 12,
+              background: token.colorBgContainer,
+              border: `1px solid ${token.colorBorderSecondary}`,
+              boxShadow: token.boxShadow,
+            }}
+            styles={{ body: { padding: isMobile ? '10px 12px' : '12px 16px' } }}
+          >
+            <Steps current={currentStep} size={isMobile ? 'small' : 'default'} items={stepItems} />
+          </Card>
+        </Card>
 
       {currentStep === 0 && (
       <Card title="上传 TXT 并开始解析" style={{ marginBottom: 16 }}>
@@ -913,6 +1058,8 @@ export default function BookImport() {
         </div>
       </Card>
       )}
+
+      </div>
     </div>
   );
 }

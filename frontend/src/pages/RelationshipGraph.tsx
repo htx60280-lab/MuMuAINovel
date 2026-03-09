@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, type CSSProperties } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Card, Tag, Button, Space, message, Typography } from 'antd';
+import { Card, Tag, Button, Space, message, Typography, theme } from 'antd';
 import {
   ArrowLeftOutlined,
   ApartmentOutlined,
@@ -100,16 +100,18 @@ interface CharacterListResponse {
 const GROUP_MAIN_CAREER_NODE_ID = '__career_group_main__';
 const GROUP_SUB_CAREER_NODE_ID = '__career_group_sub__';
 
-const EDGE_CATEGORY_META: Record<string, { label: string; color: string; order: number }> = {
-  organization: { label: '组织成员', color: '#722ed1', order: 1 },
-  career_main: { label: '主职业关联', color: '#faad14', order: 2 },
-  career_sub: { label: '副职业关联', color: '#13c2c2', order: 3 },
-  career_group: { label: '职业分类', color: '#8c8c8c', order: 4 },
-  family: { label: '亲属关系', color: '#f39c12', order: 5 },
-  hostile: { label: '敌对关系', color: '#e74c3c', order: 6 },
-  professional: { label: '职业关系', color: '#3498db', order: 7 },
-  social: { label: '社交关系', color: '#27ae60', order: 8 },
-  default: { label: '其他关系', color: '#95a5a6', order: 99 },
+type EdgeColorPreset = 'primary' | 'warning' | 'info' | 'textTertiary' | 'error' | 'success';
+
+const EDGE_CATEGORY_META: Record<string, { label: string; colorPreset: EdgeColorPreset; order: number }> = {
+  organization: { label: '组织成员', colorPreset: 'primary', order: 1 },
+  career_main: { label: '主职业关联', colorPreset: 'warning', order: 2 },
+  career_sub: { label: '副职业关联', colorPreset: 'info', order: 3 },
+  career_group: { label: '职业分类', colorPreset: 'textTertiary', order: 4 },
+  family: { label: '亲属关系', colorPreset: 'warning', order: 5 },
+  hostile: { label: '敌对关系', colorPreset: 'error', order: 6 },
+  professional: { label: '职业关系', colorPreset: 'info', order: 7 },
+  social: { label: '社交关系', colorPreset: 'success', order: 8 },
+  default: { label: '其他关系', colorPreset: 'textTertiary', order: 99 },
 };
 
 const getEdgeCategory = (edge: Edge) =>
@@ -118,13 +120,36 @@ const getEdgeCategory = (edge: Edge) =>
 const getEdgeCategoryMeta = (category: string) =>
   EDGE_CATEGORY_META[category] || {
     label: `${category}关系`,
-    color: '#95a5a6',
+    colorPreset: 'textTertiary' as const,
     order: 999,
   };
 
+const resolveEdgePresetColor = (
+  colorPreset: EdgeColorPreset,
+  token: {
+    colorPrimary: string;
+    colorWarning: string;
+    colorInfo: string;
+    colorTextTertiary: string;
+    colorError: string;
+    colorSuccess: string;
+  },
+) => {
+  const colorMap: Record<EdgeColorPreset, string> = {
+    primary: token.colorPrimary,
+    warning: token.colorWarning,
+    info: token.colorInfo,
+    textTertiary: token.colorTextTertiary,
+    error: token.colorError,
+    success: token.colorSuccess,
+  };
+
+  return colorMap[colorPreset];
+};
+
 const clampTextStyle = (rows: number): CSSProperties => ({
   margin: '4px 0 0',
-  color: '#555',
+  color: 'var(--ant-color-text-secondary)',
   fontSize: 14,
   lineHeight: '22px',
   display: '-webkit-box',
@@ -386,54 +411,65 @@ const getCategoryColor = (
   relationshipName: string,
   isActive: boolean,
   relationshipTypes: RelationshipType[],
+  token: {
+    colorPrimary: string;
+    colorWarning: string;
+    colorInfo: string;
+    colorTextTertiary: string;
+    colorError: string;
+    colorSuccess: string;
+    colorBorder: string;
+  },
 ) => {
+  const inactiveColor = token.colorBorder;
+
   if (relationshipName.startsWith('组织成员·')) {
-    return isActive ? '#722ed1' : '#cdb7f6';
+    return isActive ? token.colorPrimary : inactiveColor;
   }
 
   if (relationshipName.startsWith('主职业·')) {
-    return isActive ? '#faad14' : '#ffe7ba';
+    return isActive ? token.colorWarning : inactiveColor;
   }
 
   if (relationshipName.startsWith('副职业·')) {
-    return isActive ? '#13c2c2' : '#b5f5ec';
+    return isActive ? token.colorInfo : inactiveColor;
   }
 
   if (relationshipName.startsWith('职业分类·')) {
-    return isActive ? '#8c8c8c' : '#d9d9d9';
+    return isActive ? token.colorTextTertiary : inactiveColor;
   }
 
   const relType = relationshipTypes.find((rt) => rt.name === relationshipName);
   const category = relType?.category || 'default';
 
-  const categoryColors: Record<string, { active: string; inactive: string }> = {
-    family: { active: '#f39c12', inactive: '#fcd59e' },
-    hostile: { active: '#e74c3c', inactive: '#f5a49a' },
-    professional: { active: '#3498db', inactive: '#a9d4ed' },
-    social: { active: '#27ae60', inactive: '#a3d9b5' },
-    default: { active: '#95a5a6', inactive: '#c8d0d2' },
+  const categoryColors: Record<string, string> = {
+    family: token.colorWarning,
+    hostile: token.colorError,
+    professional: token.colorInfo,
+    social: token.colorSuccess,
+    default: token.colorTextTertiary,
   };
 
-  const colors = categoryColors[category] || categoryColors.default;
-  return isActive ? colors.active : colors.inactive;
+  const activeColor = categoryColors[category] || categoryColors.default;
+  return isActive ? activeColor : inactiveColor;
 };
 
 const getCharacterNodeStyle = (roleType: string): CSSProperties => {
   const roleColorMap: Record<string, string> = {
-    protagonist: '#e74c3c',
-    antagonist: '#9b59b6',
-    supporting: '#3498db',
+    protagonist: 'var(--ant-color-error)',
+    antagonist: 'var(--ant-color-primary)',
+    supporting: 'var(--ant-color-info)',
   };
 
-  const baseColor = roleColorMap[roleType] || '#3498db';
+  const baseColor = roleColorMap[roleType] || 'var(--ant-color-info)';
 
   return {
     width: 130,
     height: 130,
     border: `2px solid ${baseColor}`,
     borderRadius: '50%',
-    background: `linear-gradient(135deg, #ffffff, ${baseColor}15)`,
-    boxShadow: `0 4px 16px ${baseColor}25`,
+    background: `linear-gradient(135deg, var(--ant-color-bg-container), color-mix(in srgb, ${baseColor} 12%, var(--ant-color-bg-container)))`,
+    boxShadow: `0 4px 16px color-mix(in srgb, ${baseColor} 25%, transparent)`,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -445,10 +481,10 @@ const getCharacterNodeStyle = (roleType: string): CSSProperties => {
 const getOrganizationNodeStyle = (): CSSProperties => ({
   width: 160,
   height: 90,
-  border: '2px solid #27ae60',
+  border: '2px solid var(--ant-color-success)',
   borderRadius: 12,
-  background: 'linear-gradient(135deg, #ffffff, #27ae6015)',
-  boxShadow: '0 4px 16px rgba(39, 174, 96, 0.15)',
+  background: 'linear-gradient(135deg, var(--ant-color-bg-container), color-mix(in srgb, var(--ant-color-success) 12%, var(--ant-color-bg-container)))',
+  boxShadow: '0 4px 16px color-mix(in srgb, var(--ant-color-success) 15%, transparent)',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
@@ -457,15 +493,15 @@ const getOrganizationNodeStyle = (): CSSProperties => ({
 });
 
 const getCareerNodeStyle = (type: 'main' | 'sub'): CSSProperties => {
-  const color = type === 'main' ? '#faad14' : '#13c2c2';
+  const color = type === 'main' ? 'var(--ant-color-warning)' : 'var(--ant-color-info)';
 
   return {
     width: 150,
     height: 72,
     border: `2px solid ${color}`,
     borderRadius: 12,
-    background: `linear-gradient(135deg, #ffffff, ${color}15)`,
-    boxShadow: `0 4px 12px ${color}20`,
+    background: `linear-gradient(135deg, var(--ant-color-bg-container), color-mix(in srgb, ${color} 12%, var(--ant-color-bg-container)))`,
+    boxShadow: `0 4px 12px color-mix(in srgb, ${color} 20%, transparent)`,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -475,15 +511,15 @@ const getCareerNodeStyle = (type: 'main' | 'sub'): CSSProperties => {
 };
 
 const getCareerGroupStyle = (type: 'main' | 'sub'): CSSProperties => {
-  const color = type === 'main' ? '#d48806' : '#08979c';
+  const color = type === 'main' ? 'var(--ant-color-warning)' : 'var(--ant-color-info)';
 
   return {
     width: 130,
     height: 52,
     border: `2px dashed ${color}`,
     borderRadius: 26,
-    backgroundColor: '#ffffff',
-    boxShadow: `0 2px 8px ${color}15`,
+    backgroundColor: 'var(--ant-color-bg-container)',
+    boxShadow: `0 2px 8px color-mix(in srgb, ${color} 15%, transparent)`,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -511,12 +547,12 @@ const InfoField = ({
         marginBottom: 12,
         padding: '12px 14px',
         borderRadius: 12,
-        background: '#f8f9fa',
-        border: '1px solid #eef0f2',
-        boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
+        background: 'var(--ant-color-fill-quaternary)',
+        border: '1px solid var(--ant-color-border-secondary)',
+        boxShadow: '0 2px 4px color-mix(in srgb, var(--ant-color-text) 6%, transparent)',
       }}
     >
-      <Text strong style={{ fontSize: 14, color: '#333' }}>
+      <Text strong style={{ fontSize: 14, color: 'var(--ant-color-text)' }}>
         {label}
       </Text>
       <div style={clampTextStyle(rows)}>{value}</div>
@@ -527,6 +563,9 @@ const InfoField = ({
 export default function RelationshipGraph() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
+  const { token } = theme.useToken();
+  const alphaColor = (color: string, alpha: number) =>
+    `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
 
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [, setLoading] = useState(false);
@@ -564,11 +603,13 @@ export default function RelationshipGraph() {
         return {
           category,
           count,
-          ...meta,
+          label: meta.label,
+          color: resolveEdgePresetColor(meta.colorPreset, token),
+          order: meta.order,
         };
       })
       .sort((a, b) => a.order - b.order || a.label.localeCompare(b.label, 'zh-CN'));
-  }, [edges]);
+  }, [edges, token]);
 
   useEffect(() => {
     if (edgeCategoryOptions.length === 0) {
@@ -625,7 +666,15 @@ export default function RelationshipGraph() {
         layoutWeight?: number;
       },
     ): Edge => {
-      const edgeColor = getCategoryColor(relationship, status === 'active', relationshipTypes);
+      const edgeColor = getCategoryColor(relationship, status === 'active', relationshipTypes, {
+        colorPrimary: token.colorPrimary,
+        colorWarning: token.colorWarning,
+        colorInfo: token.colorInfo,
+        colorTextTertiary: token.colorTextTertiary,
+        colorError: token.colorError,
+        colorSuccess: token.colorSuccess,
+        colorBorder: token.colorBorder,
+      });
       const isOrgMemberLink = relationship.startsWith('组织成员·');
       const isCareerMainLink = relationship.startsWith('主职业·');
       const isCareerSubLink = relationship.startsWith('副职业·');
@@ -645,12 +694,12 @@ export default function RelationshipGraph() {
           opacity: isCareerClassLink ? 0.5 : (isCareerMainLink || isCareerSubLink ? 0.6 : 1),
         },
         labelStyle: {
-          fill: '#666',
+          fill: token.colorTextSecondary,
           fontSize: 10,
           fontWeight: isCareerMainLink || isCareerSubLink ? 600 : 500,
         },
         labelBgStyle: {
-          fill: '#fff',
+          fill: token.colorBgContainer,
           fillOpacity: 0.9,
         },
         markerEnd: {
@@ -673,7 +722,18 @@ export default function RelationshipGraph() {
         },
       };
     },
-    [relationshipTypes],
+    [
+      relationshipTypes,
+      token.colorBgContainer,
+      token.colorBorder,
+      token.colorError,
+      token.colorInfo,
+      token.colorPrimary,
+      token.colorSuccess,
+      token.colorTextSecondary,
+      token.colorTextTertiary,
+      token.colorWarning,
+    ],
   );
 
   const loadGraphData = useCallback(async () => {
@@ -705,28 +765,28 @@ export default function RelationshipGraph() {
         const detail = detailMap[node.id];
         
         const roleColorMap: Record<string, string> = {
-          protagonist: '#e74c3c',
-          antagonist: '#9b59b6',
-          supporting: '#3498db',
+          protagonist: token.colorError,
+          antagonist: token.colorPrimary,
+          supporting: token.colorInfo,
         };
-        const baseColor = roleColorMap[node.role_type] || '#3498db';
+        const baseColor = roleColorMap[node.role_type] || token.colorInfo;
 
         const labelContent = node.type === 'organization' ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%' }}>
-            <ApartmentOutlined style={{ fontSize: 24, color: '#27ae60', marginBottom: 4 }} />
-            <div style={{ fontWeight: 600, fontSize: 14, color: '#333', maxWidth: '90%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{node.name}</div>
-            <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>{detail?.organization_type || '组织'}</div>
+            <ApartmentOutlined style={{ fontSize: 24, color: token.colorSuccess, marginBottom: 4 }} />
+            <div style={{ fontWeight: 600, fontSize: 14, color: token.colorText, maxWidth: '90%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{node.name}</div>
+            <div style={{ fontSize: 11, color: token.colorTextSecondary, marginTop: 2 }}>{detail?.organization_type || '组织'}</div>
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%' }}>
             {detail?.avatar_url ? (
-               <img src={detail.avatar_url} alt={node.name} style={{ width: 56, height: 56, borderRadius: '50%', objectFit: 'cover', border: '2px solid #fff', boxShadow: '0 2px 6px rgba(0,0,0,0.1)', marginBottom: 6 }} />
+               <img src={detail.avatar_url} alt={node.name} style={{ width: 56, height: 56, borderRadius: '50%', objectFit: 'cover', border: `2px solid ${token.colorBgContainer}`, boxShadow: `0 2px 6px ${alphaColor(token.colorTextBase, 0.18)}`, marginBottom: 6 }} />
             ) : (
-               <div style={{ width: 56, height: 56, borderRadius: '50%', backgroundColor: '#f0f2f5', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid #fff', boxShadow: '0 2px 6px rgba(0,0,0,0.1)', marginBottom: 6 }}>
+               <div style={{ width: 56, height: 56, borderRadius: '50%', backgroundColor: token.colorFillSecondary, display: 'flex', alignItems: 'center', justifyContent: 'center', border: `2px solid ${token.colorBgContainer}`, boxShadow: `0 2px 6px ${alphaColor(token.colorTextBase, 0.18)}`, marginBottom: 6 }}>
                  <UserOutlined style={{ fontSize: 28, color: baseColor }} />
                </div>
             )}
-            <div style={{ fontWeight: 600, fontSize: 13, color: '#333', maxWidth: '90%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{node.name}</div>
+            <div style={{ fontWeight: 600, fontSize: 13, color: token.colorText, maxWidth: '90%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{node.name}</div>
             <div style={{ fontSize: 11, color: baseColor, marginTop: 2, transform: 'scale(0.9)' }}>
               {node.role_type === 'protagonist' ? '主角' : node.role_type === 'antagonist' ? '反派' : '配角'}
             </div>
@@ -753,8 +813,8 @@ export default function RelationshipGraph() {
         data: {
           label: (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-              <div style={{ fontSize: 11, color: '#d48806', marginBottom: 2 }}>主职业</div>
-              <div style={{ fontWeight: 600, fontSize: 13, color: '#333' }}>{career.name}</div>
+              <div style={{ fontSize: 11, color: token.colorWarning, marginBottom: 2 }}>主职业</div>
+              <div style={{ fontWeight: 600, fontSize: 13, color: token.colorText }}>{career.name}</div>
             </div>
           ),
           type: 'career_main',
@@ -769,8 +829,8 @@ export default function RelationshipGraph() {
         data: {
           label: (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-              <div style={{ fontSize: 11, color: '#08979c', marginBottom: 2 }}>副职业</div>
-              <div style={{ fontWeight: 600, fontSize: 13, color: '#333' }}>{career.name}</div>
+              <div style={{ fontSize: 11, color: token.colorInfo, marginBottom: 2 }}>副职业</div>
+              <div style={{ fontWeight: 600, fontSize: 13, color: token.colorText }}>{career.name}</div>
             </div>
           ),
           type: 'career_sub',
@@ -922,7 +982,23 @@ export default function RelationshipGraph() {
     } finally {
       setLoading(false);
     }
-  }, [projectId, relationshipTypes, buildFlowEdge, setNodes, setEdges]);
+  }, [
+    projectId,
+    relationshipTypes,
+    buildFlowEdge,
+    setNodes,
+    setEdges,
+    token.colorBgContainer,
+    token.colorError,
+    token.colorFillSecondary,
+    token.colorInfo,
+    token.colorPrimary,
+    token.colorSuccess,
+    token.colorText,
+    token.colorTextBase,
+    token.colorTextSecondary,
+    token.colorWarning,
+  ]);
 
   // 当 relationshipTypes 加载完成后再加载图数据
   useEffect(() => {
@@ -1000,27 +1076,27 @@ export default function RelationshipGraph() {
           marginBottom: 12,
           padding: '12px 14px',
           borderRadius: 12,
-          background: '#f8f9fa',
-          border: '1px solid #eef0f2',
-          boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
+          background: token.colorFillQuaternary,
+          border: `1px solid ${token.colorBorderSecondary}`,
+          boxShadow: `0 2px 4px ${alphaColor(token.colorTextBase, 0.06)}`,
         }}
       >
-        <Text strong style={{ fontSize: 14, color: '#333' }}>
+        <Text strong style={{ fontSize: 14, color: token.colorText }}>
           职业体系
         </Text>
         <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
           {nodeDetail.main_career_id ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <Tag color="gold" style={{ margin: 0, borderRadius: 12, padding: '0 10px', fontWeight: 500 }}>主职业</Tag>
-              <span style={{ fontSize: 14, color: '#444' }}>
+              <span style={{ fontSize: 14, color: token.colorText }}>
                 {careerNameMap[nodeDetail.main_career_id]?.name || nodeDetail.main_career_id}
-                {nodeDetail.main_career_stage ? <span style={{ color: '#888', marginLeft: 4 }}>第{nodeDetail.main_career_stage}阶</span> : ''}
+                {nodeDetail.main_career_stage ? <span style={{ color: token.colorTextTertiary, marginLeft: 4 }}>第{nodeDetail.main_career_stage}阶</span> : ''}
               </span>
             </div>
           ) : (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <Tag style={{ margin: 0, borderRadius: 12, padding: '0 10px' }}>主职业</Tag>
-              <span style={{ fontSize: 14, color: '#888' }}>未设置</span>
+              <span style={{ fontSize: 14, color: token.colorTextTertiary }}>未设置</span>
             </div>
           )}
 
@@ -1029,9 +1105,9 @@ export default function RelationshipGraph() {
                <Tag color="cyan" style={{ margin: 0, borderRadius: 12, padding: '0 10px', fontWeight: 500 }}>副职业</Tag>
                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, flex: 1 }}>
                 {subCareerData.map((sub, index) => (
-                  <span key={`${sub.career_id}-${index}`} style={{ fontSize: 14, color: '#444', background: '#fff', border: '1px solid #e8e8e8', borderRadius: 4, padding: '0 6px' }}>
+                  <span key={`${sub.career_id}-${index}`} style={{ fontSize: 14, color: token.colorText, background: token.colorBgContainer, border: `1px solid ${token.colorBorderSecondary}`, borderRadius: token.borderRadiusSM, padding: '0 6px' }}>
                     {careerNameMap[sub.career_id]?.name || sub.career_id}
-                    {sub.stage ? <span style={{ color: '#888', marginLeft: 4 }}>阶{sub.stage}</span> : ''}
+                    {sub.stage ? <span style={{ color: token.colorTextTertiary, marginLeft: 4 }}>阶{sub.stage}</span> : ''}
                   </span>
                 ))}
                </div>
@@ -1039,7 +1115,7 @@ export default function RelationshipGraph() {
           ) : (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <Tag style={{ margin: 0, borderRadius: 12, padding: '0 10px' }}>副职业</Tag>
-              <span style={{ fontSize: 14, color: '#888' }}>未设置</span>
+              <span style={{ fontSize: 14, color: token.colorTextTertiary }}>未设置</span>
             </div>
           )}
         </div>
@@ -1057,7 +1133,7 @@ export default function RelationshipGraph() {
         minHeight: 0,
         display: 'flex',
         flexDirection: 'column',
-        backgroundColor: '#f5f5f5',
+        backgroundColor: token.colorBgLayout,
         overflow: 'hidden',
       }}
     >
@@ -1093,35 +1169,35 @@ export default function RelationshipGraph() {
             <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 14, fontSize: 12, flexWrap: 'wrap' }}>
               {/* 节点图例 */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <span style={{ color: '#3498db', fontWeight: 'bold' }}>●</span>
+                <span style={{ color: token.colorInfo, fontWeight: 'bold' }}>●</span>
                 <span>角色（圆形）</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <span style={{ color: '#27ae60', fontWeight: 'bold' }}>■</span>
+                <span style={{ color: token.colorSuccess, fontWeight: 'bold' }}>■</span>
                 <span>组织（方形）</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <span style={{ color: '#faad14', fontWeight: 'bold' }}>▭</span>
+                <span style={{ color: token.colorWarning, fontWeight: 'bold' }}>▭</span>
                 <span>主职业</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <span style={{ color: '#13c2c2', fontWeight: 'bold' }}>▭</span>
+                <span style={{ color: token.colorInfo, fontWeight: 'bold' }}>▭</span>
                 <span>副职业</span>
               </div>
 
-              <span style={{ color: '#d9d9d9' }}>|</span>
+              <span style={{ color: token.colorBorder }}>|</span>
 
               {/* 连线图例 */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <span style={{ color: '#722ed1', fontWeight: 'bold' }}>- -</span>
+                <span style={{ color: token.colorPrimary, fontWeight: 'bold' }}>- -</span>
                 <span>组织成员</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <span style={{ color: '#faad14', fontWeight: 'bold' }}>—</span>
+                <span style={{ color: token.colorWarning, fontWeight: 'bold' }}>—</span>
                 <span>主职业关联</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <span style={{ color: '#13c2c2', fontWeight: 'bold' }}>- -</span>
+                <span style={{ color: token.colorInfo, fontWeight: 'bold' }}>- -</span>
                 <span>副职业关联</span>
               </div>
             </div>
@@ -1141,8 +1217,8 @@ export default function RelationshipGraph() {
                       onClick={() => toggleEdgeCategoryVisibility(option.category)}
                       style={
                         isVisible
-                          ? { backgroundColor: option.color, borderColor: option.color, color: '#fff' }
-                          : { color: '#666' }
+                          ? { backgroundColor: option.color, borderColor: option.color, color: token.colorWhite }
+                          : { color: token.colorTextSecondary }
                       }
                     >
                       {option.label}（{option.count}）
@@ -1154,7 +1230,68 @@ export default function RelationshipGraph() {
           </Space>
         }
       >
-        <div style={{ flex: 1, minHeight: 0 }}>
+        <div style={{ flex: 1, minHeight: 0 }} className="relationship-graph-flow">
+          <style>
+            {`
+              .relationship-graph-flow .react-flow__handle {
+                opacity: 0 !important;
+                background: transparent !important;
+                border: none !important;
+                pointer-events: none !important;
+              }
+
+              .relationship-graph-flow .react-flow__node {
+                outline: 1px solid var(--ant-color-border-secondary);
+                outline-offset: 0;
+              }
+
+              .relationship-graph-flow .react-flow__controls {
+                border: 1px solid var(--ant-color-border-secondary);
+                border-radius: var(--ant-border-radius-lg);
+                overflow: hidden;
+                background: var(--ant-color-bg-elevated);
+                box-shadow: 0 6px 16px color-mix(in srgb, var(--ant-color-text) 12%, transparent);
+              }
+
+              .relationship-graph-flow .react-flow__controls-button {
+                background: var(--ant-color-bg-elevated);
+                border-bottom: 1px solid var(--ant-color-border-secondary);
+                color: var(--ant-color-text);
+              }
+
+              .relationship-graph-flow .react-flow__controls-button:last-child {
+                border-bottom: none;
+              }
+
+              .relationship-graph-flow .react-flow__controls-button:hover {
+                background: var(--ant-color-fill-secondary);
+              }
+
+              .relationship-graph-flow .react-flow__controls-button:disabled {
+                background: var(--ant-color-fill-quaternary);
+                color: var(--ant-color-text-quaternary);
+              }
+
+              .relationship-graph-flow .react-flow__controls-button svg {
+                fill: currentColor;
+              }
+
+              .relationship-graph-flow .react-flow__attribution {
+                background: var(--ant-color-bg-elevated);
+                border: 1px solid var(--ant-color-border-secondary);
+                border-radius: var(--ant-border-radius-sm);
+                box-shadow: 0 2px 8px color-mix(in srgb, var(--ant-color-text) 10%, transparent);
+              }
+
+              .relationship-graph-flow .react-flow__attribution a {
+                color: var(--ant-color-text-secondary);
+              }
+
+              .relationship-graph-flow .react-flow__attribution a:hover {
+                color: var(--ant-color-primary);
+              }
+            `}
+          </style>
           <ReactFlow
             nodes={nodes}
             edges={visibleEdges}
@@ -1192,7 +1329,7 @@ export default function RelationshipGraph() {
       width: '100%',
       flex: 1,
       borderRadius: 16,
-      boxShadow: '0 12px 32px rgba(0,0,0,0.12)',
+      boxShadow: `0 12px 32px ${alphaColor(token.colorTextBase, 0.22)}`,
       overflow: 'hidden',
       display: 'flex',
       flexDirection: 'column',
@@ -1238,8 +1375,8 @@ export default function RelationshipGraph() {
                         height: '100%',
                         borderRadius: '50%',
                         objectFit: 'cover',
-                        border: '3px solid #fff',
-                        boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                        border: `3px solid ${token.colorBgContainer}`,
+                        boxShadow: `0 4px 12px ${alphaColor(token.colorTextBase, 0.18)}`,
                       }}
                     />
                   ) : (
@@ -1248,14 +1385,14 @@ export default function RelationshipGraph() {
                         width: '100%',
                         height: '100%',
                         borderRadius: '50%',
-                        backgroundColor: nodeDetail.color || (nodeDetail.is_organization ? '#27ae60' : '#1890ff'),
+                        backgroundColor: nodeDetail.color || (nodeDetail.is_organization ? token.colorSuccess : token.colorPrimary),
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
                         fontSize: 32,
-                        color: '#fff',
-                        border: '3px solid #fff',
-                        boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                        color: token.colorWhite,
+                        border: `3px solid ${token.colorBgContainer}`,
+                        boxShadow: `0 4px 12px ${alphaColor(token.colorTextBase, 0.18)}`,
                       }}
                     >
                       {nodeDetail.is_organization ? <TeamOutlined /> : <UserOutlined />}
@@ -1266,23 +1403,23 @@ export default function RelationshipGraph() {
                       position: 'absolute',
                       bottom: -4,
                       right: -4,
-                      background: nodeDetail.is_organization ? '#27ae60' : (nodeDetail.role_type === 'protagonist' ? '#e74c3c' : nodeDetail.role_type === 'antagonist' ? '#9b59b6' : '#3498db'),
+                      background: nodeDetail.is_organization ? token.colorSuccess : (nodeDetail.role_type === 'protagonist' ? token.colorError : nodeDetail.role_type === 'antagonist' ? token.colorPrimary : token.colorInfo),
                       borderRadius: '50%',
                       width: 28,
                       height: 28,
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      border: '2px solid #fff',
-                      color: '#fff',
-                      boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
+                      border: `2px solid ${token.colorBgContainer}`,
+                      color: token.colorWhite,
+                      boxShadow: `0 2px 6px ${alphaColor(token.colorTextBase, 0.22)}`,
                     }}
                   >
                     {nodeDetail.is_organization ? <ApartmentOutlined style={{ fontSize: 14 }} /> : <UserOutlined style={{ fontSize: 14 }} />}
                   </div>
                 </div>
 
-                <div style={{ fontSize: 20, fontWeight: 600, color: '#333', marginBottom: 8 }}>{nodeDetail.name}</div>
+                <div style={{ fontSize: 20, fontWeight: 600, color: token.colorText, marginBottom: 8 }}>{nodeDetail.name}</div>
                 <Space size={6} wrap style={{ justifyContent: 'center' }}>
                   {!nodeDetail.is_organization && (
                     <Tag
@@ -1321,12 +1458,12 @@ export default function RelationshipGraph() {
                           marginBottom: 12,
                           padding: '12px 14px',
                           borderRadius: 12,
-                          background: '#f8f9fa',
-                          border: '1px solid #eef0f2',
-                          boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
+                          background: token.colorFillQuaternary,
+                          border: `1px solid ${token.colorBorderSecondary}`,
+                          boxShadow: `0 2px 4px ${alphaColor(token.colorTextBase, 0.06)}`,
                         }}
                       >
-                        <Text strong style={{ fontSize: 14, color: '#333' }}>
+                        <Text strong style={{ fontSize: 14, color: token.colorText }}>
                           特征标签
                         </Text>
                         <Space size={[6, 8]} wrap style={{ marginTop: 10 }}>
@@ -1352,16 +1489,16 @@ export default function RelationshipGraph() {
                           marginBottom: 12,
                           padding: '12px 14px',
                           borderRadius: 12,
-                          background: '#f8f9fa',
-                          border: '1px solid #eef0f2',
-                          boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
+                          background: token.colorFillQuaternary,
+                          border: `1px solid ${token.colorBorderSecondary}`,
+                          boxShadow: `0 2px 4px ${alphaColor(token.colorTextBase, 0.06)}`,
                         }}
                       >
-                        <Text strong style={{ fontSize: 14, color: '#333' }}>
+                        <Text strong style={{ fontSize: 14, color: token.colorText }}>
                           势力等级
                         </Text>
-                        <div style={{ ...clampTextStyle(1), fontSize: 18, color: '#f39c12', fontWeight: 'bold' }}>
-                          {nodeDetail.power_level}<span style={{ fontSize: 14, color: '#888', fontWeight: 'normal' }}>/100</span>
+                        <div style={{ ...clampTextStyle(1), fontSize: 18, color: token.colorWarning, fontWeight: 'bold' }}>
+                          {nodeDetail.power_level}<span style={{ fontSize: 14, color: token.colorTextTertiary, fontWeight: 'normal' }}>/100</span>
                         </div>
                       </div>
                     )}
@@ -1372,12 +1509,12 @@ export default function RelationshipGraph() {
                           marginBottom: 12,
                           padding: '12px 14px',
                           borderRadius: 12,
-                          background: '#f8f9fa',
-                          border: '1px solid #eef0f2',
-                          boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
+                          background: token.colorFillQuaternary,
+                          border: `1px solid ${token.colorBorderSecondary}`,
+                          boxShadow: `0 2px 4px ${alphaColor(token.colorTextBase, 0.06)}`,
                         }}
                       >
-                        <Text strong style={{ fontSize: 14, color: '#333' }}>
+                        <Text strong style={{ fontSize: 14, color: token.colorText }}>
                           组织成员
                         </Text>
                         <Space size={[6, 8]} wrap style={{ marginTop: 10 }}>
@@ -1407,9 +1544,9 @@ export default function RelationshipGraph() {
             zIndex: 1000,
           }}
         >
-          <Card size="small" style={{ width: 300, borderRadius: 10, boxShadow: '0 6px 18px rgba(0,0,0,0.12)' }}>
+          <Card size="small" style={{ width: 300, borderRadius: 10, boxShadow: `0 6px 18px ${alphaColor(token.colorTextBase, 0.2)}` }}>
             <Space align="start">
-              <TrophyOutlined style={{ color: '#faad14', marginTop: 4 }} />
+              <TrophyOutlined style={{ color: token.colorWarning, marginTop: 4 }} />
               <div>
                 <Text strong>职业节点</Text>
                 <p style={{ ...clampTextStyle(2), marginTop: 2 }}>

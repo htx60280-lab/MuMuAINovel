@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect, useMemo } from 'react';
-import { Button, List, Modal, Form, Input, message, Empty, Space, Popconfirm, Card, Select, Radio, Tag, InputNumber, Tabs, Pagination } from 'antd';
+import { Button, List, Modal, Form, Input, message, Empty, Space, Popconfirm, Card, Select, Radio, Tag, InputNumber, Tabs, Pagination, theme } from 'antd';
 import { EditOutlined, DeleteOutlined, ThunderboltOutlined, BranchesOutlined, AppstoreAddOutlined, CheckCircleOutlined, ExclamationCircleOutlined, PlusOutlined, FileTextOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { useOutlineSync } from '../store/hooks';
@@ -119,6 +119,9 @@ export default function Outline() {
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [isExpanding, setIsExpanding] = useState(false);
   const [projectCharacters, setProjectCharacters] = useState<Array<{ label: string; value: string }>>([]);
+  const { token } = theme.useToken();
+  const alphaColor = (color: string, alpha: number) =>
+    `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
 
   // ✅ 新增：记录场景区域的展开/折叠状态
   const [scenesExpandStatus, setScenesExpandStatus] = useState<Record<string, boolean>>({});
@@ -776,7 +779,7 @@ export default function Outline() {
                   console.log('已同步到Form，当前Form值:', generateForm.getFieldsValue());
                 }}
               />
-              <div style={{ color: 'var(--color-text-tertiary)', fontSize: 12, marginTop: 4 }}>
+              <div style={{ color: token.colorTextTertiary, fontSize: 12, marginTop: 4 }}>
                 {defaultModel ? `当前默认模型: ${loadedModels.find(m => m.value === defaultModel)?.label || defaultModel}` : '未配置默认模型'}
               </div>
             </Form.Item>
@@ -853,19 +856,19 @@ export default function Outline() {
                 <p>序号 <strong>{values.order_index}</strong> 已被使用：</p>
                 <div style={{
                   padding: 12,
-                  background: 'var(--color-warning-bg)',
-                  borderRadius: 4,
-                  border: '1px solid var(--color-warning-border)',
+                  background: token.colorWarningBg,
+                  borderRadius: token.borderRadius,
+                  border: `1px solid ${token.colorWarningBorder}`,
                   marginTop: 8
                 }}>
-                  <div style={{ fontWeight: 500, color: 'var(--color-warning)' }}>
+                  <div style={{ fontWeight: 500, color: token.colorWarning }}>
                     {currentProject?.outline_mode === 'one-to-one'
                       ? `第${existingOutline.order_index}章`
                       : `第${existingOutline.order_index}卷`
                     }：{existingOutline.title}
                   </div>
                 </div>
-                <p style={{ marginTop: 12, color: 'var(--color-text-secondary)' }}>
+                <p style={{ marginTop: 12, color: token.colorTextSecondary }}>
                   💡 建议使用序号 <strong>{nextOrderIndex}</strong>，或选择其他未使用的序号
                 </p>
               </div>
@@ -928,18 +931,18 @@ export default function Outline() {
                     </p>
                     <div style={{
                       padding: 12,
-                      background: 'var(--color-warning-bg)',
-                      borderRadius: 4,
-                      border: '1px solid var(--color-warning-border)'
+                      background: token.colorWarningBg,
+                      borderRadius: token.borderRadius,
+                      border: `1px solid ${token.colorWarningBorder}`
                     }}>
-                      <div style={{ fontWeight: 500, marginBottom: 8, color: 'var(--color-warning)' }}>
+                      <div style={{ fontWeight: 500, marginBottom: 8, color: token.colorWarning }}>
                         ⚠️ 需要先展开：
                       </div>
-                      <div style={{ color: 'var(--color-text-secondary)' }}>
+                      <div style={{ color: token.colorTextSecondary }}>
                         第{prevOutline.order_index}卷：《{prevOutline.title}》
                       </div>
                     </div>
-                    <p style={{ marginTop: 12, color: 'var(--color-text-secondary)', fontSize: 13 }}>
+                    <p style={{ marginTop: 12, color: token.colorTextSecondary, fontSize: 13 }}>
                       💡 提示：您也可以使用「批量展开」功能，系统会自动按顺序处理所有大纲。
                     </p>
                   </div>
@@ -978,9 +981,9 @@ export default function Outline() {
         centered: true,
         content: (
           <div>
-            <div style={{ marginBottom: 16, padding: 12, background: 'var(--color-bg-layout)', borderRadius: 4 }}>
+            <div style={{ marginBottom: 16, padding: 12, background: token.colorBgLayout, borderRadius: token.borderRadius }}>
               <div style={{ fontWeight: 500, marginBottom: 4 }}>大纲标题</div>
-              <div style={{ color: 'var(--color-text-secondary)' }}>{outlineTitle}</div>
+              <div style={{ color: token.colorTextSecondary }}>{outlineTitle}</div>
             </div>
             <Form
               form={expansionForm}
@@ -1132,7 +1135,7 @@ export default function Outline() {
     modalApi.info({
       title: (
         <Space style={{ flexWrap: 'wrap' }}>
-          <CheckCircleOutlined style={{ color: 'var(--color-success)' }} />
+          <CheckCircleOutlined style={{ color: token.colorSuccess }} />
           <span>《{outlineTitle}》展开信息</span>
         </Space>
       ),
@@ -1164,10 +1167,10 @@ export default function Outline() {
                 content: (
                   <div>
                     <p>此操作将删除大纲《{outlineTitle}》展开的所有 <strong>{data.chapter_count}</strong> 个章节。</p>
-                    <p style={{ color: 'var(--color-primary)', marginTop: 8 }}>
+                    <p style={{ color: token.colorPrimary, marginTop: 8 }}>
                       📝 注意：大纲本身会保留，您可以重新展开
                     </p>
-                    <p style={{ color: '#ff4d4f', marginTop: 8 }}>
+                    <p style={{ color: token.colorError, marginTop: 8 }}>
                       ⚠️ 警告：章节内容将永久删除且无法恢复！
                     </p>
                   </div>
@@ -1324,7 +1327,7 @@ export default function Outline() {
                               key={sceneIdx}
                               size="small"
                               style={{
-                                backgroundColor: '#fafafa',
+                                backgroundColor: token.colorFillQuaternary,
                                 maxWidth: '100%',
                                 overflow: 'hidden'
                               }}
@@ -1374,7 +1377,7 @@ export default function Outline() {
     modalApi.confirm({
       title: (
         <Space>
-          <CheckCircleOutlined style={{ color: 'var(--color-success)' }} />
+          <CheckCircleOutlined style={{ color: token.colorSuccess }} />
           <span>展开规划预览</span>
         </Space>
       ),
@@ -1438,7 +1441,7 @@ export default function Outline() {
                       <Card size="small" title="场景">
                         <Space direction="vertical" size="small" style={{ width: '100%' }}>
                           {plan.scenes.map((scene, sceneIdx) => (
-                            <Card key={sceneIdx} size="small" style={{ backgroundColor: '#fafafa' }}>
+                            <Card key={sceneIdx} size="small" style={{ backgroundColor: token.colorFillQuaternary }}>
                               <div><strong>地点：</strong>{scene.location}</div>
                               <div><strong>角色：</strong>{scene.characters.join('、')}</div>
                               <div><strong>目的：</strong>{scene.purpose}</div>
@@ -1511,8 +1514,16 @@ export default function Outline() {
       centered: true,
       content: (
         <div>
-          <div style={{ marginBottom: 16, padding: 12, background: 'var(--color-warning-bg)', borderRadius: 4 }}>
-            <div style={{ color: '#856404' }}>
+          <div
+            style={{
+              marginBottom: 16,
+              padding: 12,
+              background: token.colorWarningBg,
+              borderRadius: token.borderRadius,
+              border: `1px solid ${token.colorWarningBorder}`,
+            }}
+          >
+            <div style={{ color: token.colorWarningText }}>
               ⚠️ 将对当前项目的所有 {outlines.length} 个大纲进行展开
             </div>
           </div>
@@ -1639,16 +1650,16 @@ export default function Outline() {
           <div style={{
             marginBottom: 16,
             padding: 12,
-            background: 'var(--color-warning-bg)',
-            borderRadius: 4,
-            border: '1px solid #ffe58f'
+            background: token.colorWarningBg,
+            borderRadius: token.borderRadius,
+            border: `1px solid ${token.colorWarningBorder}`
           }}>
-            <div style={{ fontWeight: 500, marginBottom: 8, color: 'var(--color-warning)' }}>
+            <div style={{ fontWeight: 500, marginBottom: 8, color: token.colorWarning }}>
               ⚠️ 以下大纲已展开过，已自动跳过：
             </div>
             <Space direction="vertical" size="small" style={{ width: '100%' }}>
               {batchPreviewData.skipped_outlines.map((skipped: SkippedOutlineInfo, idx: number) => (
-                <div key={idx} style={{ fontSize: 13, color: '#666' }}>
+                <div key={idx} style={{ fontSize: 13, color: token.colorTextSecondary }}>
                   • {skipped.outline_title} <Tag color="default" style={{ fontSize: 11 }}>{skipped.reason}</Tag>
                 </div>
               ))}
@@ -1661,11 +1672,11 @@ export default function Outline() {
           {/* 左栏：大纲列表 */}
           <div style={{
             width: 280,
-            borderRight: '1px solid #f0f0f0',
+            borderRight: `1px solid ${token.colorBorderSecondary}`,
             paddingRight: 12,
             overflowY: 'auto'
           }}>
-            <div style={{ fontWeight: 500, marginBottom: 8, color: '#666' }}>大纲列表</div>
+            <div style={{ fontWeight: 500, marginBottom: 8, color: token.colorTextSecondary }}>大纲列表</div>
             <List
               size="small"
               dataSource={batchPreviewData.expansion_results}
@@ -1679,10 +1690,10 @@ export default function Outline() {
                   style={{
                     cursor: 'pointer',
                     padding: '8px 12px',
-                    background: selectedOutlineIdx === idx ? '#e6f7ff' : 'transparent',
-                    borderRadius: 4,
+                    background: selectedOutlineIdx === idx ? token.colorPrimaryBg : 'transparent',
+                    borderRadius: token.borderRadius,
                     marginBottom: 4,
-                    border: selectedOutlineIdx === idx ? '1px solid var(--color-primary)' : '1px solid transparent'
+                    border: selectedOutlineIdx === idx ? `1px solid ${token.colorPrimary}` : '1px solid transparent'
                   }}
                 >
                   <div style={{ width: '100%' }}>
@@ -1702,11 +1713,11 @@ export default function Outline() {
           {/* 中栏：章节列表 */}
           <div style={{
             width: 320,
-            borderRight: '1px solid #f0f0f0',
+            borderRight: `1px solid ${token.colorBorderSecondary}`,
             paddingRight: 12,
             overflowY: 'auto'
           }}>
-            <div style={{ fontWeight: 500, marginBottom: 8, color: '#666' }}>
+            <div style={{ fontWeight: 500, marginBottom: 8, color: token.colorTextSecondary }}>
               章节列表 ({batchPreviewData.expansion_results[selectedOutlineIdx]?.actual_chapter_count || 0} 章)
             </div>
             {batchPreviewData.expansion_results[selectedOutlineIdx] && (
@@ -1720,10 +1731,10 @@ export default function Outline() {
                     style={{
                       cursor: 'pointer',
                       padding: '8px 12px',
-                      background: selectedChapterIdx === idx ? '#e6f7ff' : 'transparent',
-                      borderRadius: 4,
+                      background: selectedChapterIdx === idx ? token.colorPrimaryBg : 'transparent',
+                      borderRadius: token.borderRadius,
                       marginBottom: 4,
-                      border: selectedChapterIdx === idx ? '1px solid var(--color-primary)' : '1px solid transparent'
+                      border: selectedChapterIdx === idx ? `1px solid ${token.colorPrimary}` : '1px solid transparent'
                     }}
                   >
                     <div style={{ width: '100%' }}>
@@ -1744,7 +1755,7 @@ export default function Outline() {
 
           {/* 右栏：章节详情 */}
           <div style={{ flex: 1, overflowY: 'auto', paddingLeft: 12 }}>
-            <div style={{ fontWeight: 500, marginBottom: 12, color: '#666' }}>章节详情</div>
+            <div style={{ fontWeight: 500, marginBottom: 12, color: token.colorTextSecondary }}>章节详情</div>
             {batchPreviewData.expansion_results[selectedOutlineIdx]?.chapter_plans[selectedChapterIdx] ? (
               <Space direction="vertical" size="middle" style={{ width: '100%' }}>
                 <Card size="small" title="情节概要" bordered={false}>
@@ -1775,7 +1786,7 @@ export default function Outline() {
                   <Card size="small" title="场景" bordered={false}>
                     <Space direction="vertical" size="small" style={{ width: '100%' }}>
                       {batchPreviewData.expansion_results[selectedOutlineIdx].chapter_plans[selectedChapterIdx].scenes!.map((scene: SceneInfo, sceneIdx: number) => (
-                        <Card key={sceneIdx} size="small" style={{ backgroundColor: '#fafafa' }}>
+                        <Card key={sceneIdx} size="small" style={{ backgroundColor: token.colorFillQuaternary }}>
                           <div><strong>地点：</strong>{scene.location}</div>
                           <div><strong>角色：</strong>{scene.characters.join('、')}</div>
                           <div><strong>目的：</strong>{scene.purpose}</div>
@@ -1876,7 +1887,7 @@ export default function Outline() {
       <Modal
         title={
           <Space>
-            <CheckCircleOutlined style={{ color: 'var(--color-success)' }} />
+            <CheckCircleOutlined style={{ color: token.colorSuccess }} />
             <span>批量展开规划预览</span>
           </Space>
         }
@@ -1907,10 +1918,10 @@ export default function Outline() {
           position: 'sticky',
           top: 0,
           zIndex: 10,
-          backgroundColor: 'var(--color-bg-container)',
+          backgroundColor: token.colorBgContainer,
           padding: isMobile ? '12px 0' : '16px 0',
           marginBottom: isMobile ? 12 : 16,
-          borderBottom: '1px solid #f0f0f0',
+          borderBottom: `1px solid ${token.colorBorderSecondary}`,
           display: 'flex',
           flexDirection: isMobile ? 'column' : 'row',
           gap: isMobile ? 12 : 0,
@@ -1995,8 +2006,8 @@ export default function Outline() {
                         style={{
                           width: '100%',
                           borderRadius: isMobile ? 6 : 8,
-                          border: '1px solid #f0f0f0',
-                          boxShadow: '0 1px 2px rgba(0, 0, 0, 0.03)',
+                          border: `1px solid ${token.colorBorderSecondary}`,
+                          boxShadow: `0 1px 2px ${alphaColor(token.colorTextBase, 0.08)}`,
                           transition: 'all 0.3s ease'
                         }}
                         bodyStyle={{
@@ -2004,14 +2015,14 @@ export default function Outline() {
                         }}
                         onMouseEnter={(e) => {
                           if (!isMobile) {
-                            e.currentTarget.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.08)';
-                            e.currentTarget.style.borderColor = 'var(--color-primary)';
+                            e.currentTarget.style.boxShadow = `0 4px 12px ${alphaColor(token.colorTextBase, 0.16)}`;
+                            e.currentTarget.style.borderColor = token.colorPrimary;
                           }
                         }}
                         onMouseLeave={(e) => {
                           if (!isMobile) {
-                            e.currentTarget.style.boxShadow = '0 1px 2px rgba(0, 0, 0, 0.03)';
-                            e.currentTarget.style.borderColor = '#f0f0f0';
+                            e.currentTarget.style.boxShadow = `0 1px 2px ${alphaColor(token.colorTextBase, 0.08)}`;
+                            e.currentTarget.style.borderColor = token.colorBorderSecondary;
                           }
                         }}
                       >
@@ -2019,7 +2030,7 @@ export default function Outline() {
                           style={{ width: '100%' }}
                           title={
                             <Space size="small" style={{ fontSize: isMobile ? 13 : 16, flexWrap: 'wrap', lineHeight: isMobile ? '1.4' : '1.5' }}>
-                              <span style={{ color: 'var(--color-primary)', fontWeight: 'bold', fontSize: isMobile ? 13 : 16 }}>
+                              <span style={{ color: token.colorPrimary, fontWeight: 'bold', fontSize: isMobile ? 13 : 16 }}>
                                 {currentProject?.outline_mode === 'one-to-one'
                                   ? `第${item.order_index || '?'}章`
                                   : `第${item.order_index || '?'}卷`
@@ -2042,16 +2053,16 @@ export default function Outline() {
                               <div style={{
                                 marginBottom: isMobile ? 10 : 12,
                                 padding: isMobile ? '8px 10px' : '10px 12px',
-                                background: 'linear-gradient(135deg, #fafafa 0%, #f5f5f5 100%)',
-                                borderLeft: '3px solid #8c8c8c',
-                                borderRadius: isMobile ? 4 : 6,
+                                background: token.colorFillQuaternary,
+                                borderLeft: `3px solid ${token.colorBorderSecondary}`,
+                                borderRadius: token.borderRadius,
                                 fontSize: isMobile ? 12 : 13,
-                                color: '#262626',
+                                color: token.colorText,
                                 lineHeight: '1.6'
                               }}>
                                 <div style={{
                                   fontWeight: 600,
-                                  color: '#595959',
+                                  color: token.colorTextSecondary,
                                   marginBottom: isMobile ? 4 : 6,
                                   fontSize: isMobile ? 12 : 13
                                 }}>
@@ -2059,11 +2070,11 @@ export default function Outline() {
                                 </div>
                                 <div style={{
                                   padding: isMobile ? '6px 8px' : '6px 10px',
-                                  background: '#ffffff',
-                                  border: '1px solid #d9d9d9',
-                                  borderRadius: 4,
+                                  background: token.colorBgContainer,
+                                  border: `1px solid ${token.colorBorder}`,
+                                  borderRadius: token.borderRadiusSM,
                                   fontSize: isMobile ? 12 : 13,
-                                  color: '#262626',
+                                  color: token.colorText,
                                   lineHeight: '1.6'
                                 }}>
                                   {item.content}
@@ -2075,9 +2086,9 @@ export default function Outline() {
                                 <div style={{
                                   marginTop: isMobile ? 10 : 12,
                                   padding: isMobile ? '8px 10px' : '10px 12px',
-                                  background: 'linear-gradient(135deg, #f5f3ff 0%, #faf5ff 100%)',
-                                  borderLeft: '3px solid #9333ea',
-                                  borderRadius: isMobile ? 4 : 6
+                                  background: token.colorPrimaryBg,
+                                  borderLeft: `3px solid ${token.colorPrimary}`,
+                                  borderRadius: token.borderRadius
                                 }}>
                                   <div style={{
                                     display: 'flex',
@@ -2088,7 +2099,7 @@ export default function Outline() {
                                     <span style={{
                                       fontSize: isMobile ? 12 : 13,
                                       fontWeight: 600,
-                                      color: '#7c3aed',
+                                      color: token.colorPrimary,
                                       display: 'flex',
                                       alignItems: 'center',
                                       gap: 4
@@ -2118,9 +2129,9 @@ export default function Outline() {
                                           padding: isMobile ? '2px 8px' : '3px 10px',
                                           fontSize: isMobile ? 11 : 12,
                                           fontWeight: 500,
-                                          border: '1px solid #e9d5ff',
-                                          background: '#ffffff',
-                                          color: '#7c3aed',
+                                          border: `1px solid ${token.colorPrimaryBorder}`,
+                                          background: token.colorBgContainer,
+                                          color: token.colorPrimary,
                                           whiteSpace: 'normal',
                                           wordBreak: 'break-word',
                                           height: 'auto',
@@ -2139,9 +2150,9 @@ export default function Outline() {
                                 <div style={{
                                   marginTop: isMobile ? 10 : 12,
                                   padding: isMobile ? '8px 10px' : '10px 12px',
-                                  background: 'linear-gradient(135deg, #fff7ed 0%, #fffbeb 100%)',
-                                  borderLeft: '3px solid #ea580c',
-                                  borderRadius: isMobile ? 4 : 6
+                                  background: token.colorWarningBg,
+                                  borderLeft: `3px solid ${token.colorWarning}`,
+                                  borderRadius: token.borderRadius
                                 }}>
                                   <div style={{
                                     display: 'flex',
@@ -2152,7 +2163,7 @@ export default function Outline() {
                                     <span style={{
                                       fontSize: isMobile ? 12 : 13,
                                       fontWeight: 600,
-                                      color: '#ea580c',
+                                      color: token.colorWarning,
                                       display: 'flex',
                                       alignItems: 'center',
                                       gap: 4
@@ -2182,9 +2193,9 @@ export default function Outline() {
                                           padding: isMobile ? '2px 8px' : '3px 10px',
                                           fontSize: isMobile ? 11 : 12,
                                           fontWeight: 500,
-                                          border: '1px solid #fed7aa',
-                                          background: '#ffffff',
-                                          color: '#ea580c',
+                                          border: `1px solid ${token.colorWarningBorder}`,
+                                          background: token.colorBgContainer,
+                                          color: token.colorWarning,
                                           whiteSpace: 'normal',
                                           wordBreak: 'break-word',
                                           height: 'auto',
@@ -2209,9 +2220,9 @@ export default function Outline() {
                                   <div style={{
                                     marginTop: isMobile ? 10 : 12,
                                     padding: isMobile ? '8px 10px' : '10px 12px',
-                                    background: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)',
-                                    borderLeft: '3px solid #0ea5e9',
-                                    borderRadius: isMobile ? 4 : 6
+                                    background: token.colorInfoBg,
+                                    borderLeft: `3px solid ${token.colorInfo}`,
+                                    borderRadius: token.borderRadius
                                   }}>
                                     <div style={{
                                       display: 'flex',
@@ -2224,7 +2235,7 @@ export default function Outline() {
                                       <span style={{
                                         fontSize: isMobile ? 12 : 13,
                                         fontWeight: 600,
-                                        color: '#0284c7',
+                                        color: token.colorInfo,
                                         display: 'flex',
                                         alignItems: 'center',
                                         gap: 4
@@ -2254,7 +2265,7 @@ export default function Outline() {
                                             fontSize: isMobile ? 10 : 11,
                                             height: isMobile ? 20 : 22,
                                             padding: isMobile ? '0 6px' : '0 8px',
-                                            color: '#0284c7'
+                                            color: token.colorInfo
                                           }}
                                         >
                                           {isExpanded ? '收起 ▲' : `展开 (${structureData.scenes!.length - maxVisibleScenes}+) ▼`}
@@ -2278,11 +2289,11 @@ export default function Outline() {
                                             key={idx}
                                             style={{
                                               padding: isMobile ? '6px 8px' : '8px 10px',
-                                              background: '#ffffff',
-                                              border: '1px solid #bae6fd',
-                                              borderRadius: isMobile ? 4 : 6,
+                                              background: token.colorBgContainer,
+                                              border: `1px solid ${token.colorInfoBorder}`,
+                                              borderRadius: token.borderRadius,
                                               fontSize: isMobile ? 11 : 12,
-                                              color: '#0c4a6e',
+                                              color: token.colorText,
                                               display: 'flex',
                                               alignItems: 'flex-start',
                                               gap: isMobile ? 6 : 8,
@@ -2294,13 +2305,13 @@ export default function Outline() {
                                             }}
                                             onMouseEnter={(e) => {
                                               if (!isMobile) {
-                                                e.currentTarget.style.borderColor = '#0ea5e9';
-                                                e.currentTarget.style.boxShadow = '0 2px 8px rgba(14, 165, 233, 0.15)';
+                                                e.currentTarget.style.borderColor = token.colorInfo;
+                                                e.currentTarget.style.boxShadow = `0 2px 8px ${alphaColor(token.colorInfo, 0.25)}`;
                                               }
                                             }}
                                             onMouseLeave={(e) => {
                                               if (!isMobile) {
-                                                e.currentTarget.style.borderColor = '#bae6fd';
+                                                e.currentTarget.style.borderColor = token.colorInfoBorder;
                                                 e.currentTarget.style.boxShadow = 'none';
                                               }
                                             }}
@@ -2332,9 +2343,9 @@ export default function Outline() {
                                             key={idx}
                                             style={{
                                               padding: isMobile ? '8px 10px' : '10px 12px',
-                                              background: '#ffffff',
-                                              border: '1px solid #bae6fd',
-                                              borderRadius: isMobile ? 4 : 6,
+                                              background: token.colorBgContainer,
+                                              border: `1px solid ${token.colorInfoBorder}`,
+                                              borderRadius: token.borderRadius,
                                               fontSize: isMobile ? 11 : 12,
                                               transition: 'all 0.2s ease',
                                               cursor: 'default',
@@ -2344,13 +2355,13 @@ export default function Outline() {
                                             }}
                                             onMouseEnter={(e) => {
                                               if (!isMobile) {
-                                                e.currentTarget.style.borderColor = '#0ea5e9';
-                                                e.currentTarget.style.boxShadow = '0 2px 8px rgba(14, 165, 233, 0.15)';
+                                                e.currentTarget.style.borderColor = token.colorInfo;
+                                                e.currentTarget.style.boxShadow = `0 2px 8px ${alphaColor(token.colorInfo, 0.25)}`;
                                               }
                                             }}
                                             onMouseLeave={(e) => {
                                               if (!isMobile) {
-                                                e.currentTarget.style.borderColor = '#bae6fd';
+                                                e.currentTarget.style.borderColor = token.colorInfoBorder;
                                                 e.currentTarget.style.boxShadow = 'none';
                                               }
                                             }}
@@ -2374,7 +2385,7 @@ export default function Outline() {
                                               </Tag>
                                               <span style={{
                                                 fontWeight: 600,
-                                                color: '#0c4a6e',
+                                                color: token.colorText,
                                                 fontSize: isMobile ? 12 : 13,
                                                 flex: 1,
                                                 overflow: 'hidden',
@@ -2387,7 +2398,7 @@ export default function Outline() {
                                             {scene.characters && scene.characters.length > 0 && (
                                               <div style={{
                                                 fontSize: isMobile ? 10 : 11,
-                                                color: '#64748b',
+                                                color: token.colorTextSecondary,
                                                 marginBottom: 4,
                                                 paddingLeft: isMobile ? 2 : 4,
                                                 overflow: 'hidden',
@@ -2401,7 +2412,7 @@ export default function Outline() {
                                             {scene.purpose && (
                                               <div style={{
                                                 fontSize: isMobile ? 10 : 11,
-                                                color: '#64748b',
+                                                color: token.colorTextSecondary,
                                                 paddingLeft: isMobile ? 2 : 4,
                                                 lineHeight: '1.5',
                                                 overflow: 'hidden',
@@ -2426,9 +2437,9 @@ export default function Outline() {
                               <div style={{
                                 marginTop: 12,
                                 padding: '10px 12px',
-                                background: 'linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%)',
-                                borderLeft: '3px solid #f97316',
-                                borderRadius: 6
+                                background: token.colorWarningBg,
+                                borderLeft: `3px solid ${token.colorWarning}`,
+                                borderRadius: token.borderRadius
                               }}>
                                 <div style={{
                                   display: 'flex',
@@ -2439,7 +2450,7 @@ export default function Outline() {
                                   <span style={{
                                     fontSize: 13,
                                     fontWeight: 600,
-                                    color: '#ea580c',
+                                    color: token.colorWarning,
                                     display: 'flex',
                                     alignItems: 'center',
                                     gap: 4
@@ -2464,11 +2475,11 @@ export default function Outline() {
                                       key={idx}
                                       style={{
                                         padding: '6px 10px',
-                                        background: '#ffffff',
-                                        border: '1px solid #fed7aa',
-                                        borderRadius: 4,
+                                        background: token.colorBgContainer,
+                                        border: `1px solid ${token.colorWarningBorder}`,
+                                        borderRadius: token.borderRadiusSM,
                                         fontSize: 12,
-                                        color: '#9a3412',
+                                        color: token.colorWarningText,
                                         display: 'flex',
                                         alignItems: 'flex-start',
                                         gap: 8
@@ -2503,9 +2514,9 @@ export default function Outline() {
                               <div style={{
                                 marginTop: 12,
                                 padding: '10px 12px',
-                                background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
-                                borderLeft: '3px solid #22c55e',
-                                borderRadius: 6
+                                background: token.colorSuccessBg,
+                                borderLeft: `3px solid ${token.colorSuccess}`,
+                                borderRadius: token.borderRadius
                               }}>
                                 <div style={{
                                   display: 'flex',
@@ -2516,7 +2527,7 @@ export default function Outline() {
                                   <span style={{
                                     fontSize: 13,
                                     fontWeight: 600,
-                                    color: '#15803d',
+                                    color: token.colorSuccess,
                                     display: 'flex',
                                     alignItems: 'center',
                                     gap: 4
@@ -2548,11 +2559,11 @@ export default function Outline() {
                                       key={idx}
                                       style={{
                                         padding: isMobile ? '6px 8px' : '8px 10px',
-                                        background: '#ffffff',
-                                        border: '1px solid #bbf7d0',
-                                        borderRadius: isMobile ? 4 : 6,
+                                        background: token.colorBgContainer,
+                                        border: `1px solid ${token.colorSuccessBorder}`,
+                                        borderRadius: token.borderRadius,
                                         fontSize: isMobile ? 11 : 12,
-                                        color: '#166534',
+                                        color: token.colorText,
                                         display: 'flex',
                                         alignItems: 'flex-start',
                                         gap: isMobile ? 6 : 8,
@@ -2564,13 +2575,13 @@ export default function Outline() {
                                       }}
                                       onMouseEnter={(e) => {
                                         if (!isMobile) {
-                                          e.currentTarget.style.borderColor = '#22c55e';
-                                          e.currentTarget.style.boxShadow = '0 2px 8px rgba(34, 197, 94, 0.15)';
+                                          e.currentTarget.style.borderColor = token.colorSuccess;
+                                          e.currentTarget.style.boxShadow = `0 2px 8px ${alphaColor(token.colorSuccess, 0.25)}`;
                                         }
                                       }}
                                       onMouseLeave={(e) => {
                                         if (!isMobile) {
-                                          e.currentTarget.style.borderColor = '#bbf7d0';
+                                          e.currentTarget.style.borderColor = token.colorSuccessBorder;
                                           e.currentTarget.style.boxShadow = 'none';
                                         }
                                       }}
@@ -2604,9 +2615,9 @@ export default function Outline() {
                               <div style={{
                                 marginTop: 12,
                                 padding: '10px 12px',
-                                background: 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)',
-                                borderLeft: '3px solid #f59e0b',
-                                borderRadius: 6,
+                                background: token.colorWarningBg,
+                                borderLeft: `3px solid ${token.colorWarning}`,
+                                borderRadius: token.borderRadius,
                                 display: 'flex',
                                 alignItems: 'center',
                                 gap: 8
@@ -2614,7 +2625,7 @@ export default function Outline() {
                                 <span style={{
                                   fontSize: 13,
                                   fontWeight: 600,
-                                  color: '#b45309'
+                                  color: token.colorWarning
                                 }}>
                                   💫 情感基调：
                                 </span>
@@ -2625,9 +2636,9 @@ export default function Outline() {
                                     fontSize: 12,
                                     padding: '2px 12px',
                                     borderRadius: 12,
-                                    background: '#ffffff',
-                                    border: '1px solid #fbbf24',
-                                    color: '#b45309'
+                                    background: token.colorBgContainer,
+                                    border: `1px solid ${token.colorWarningBorder}`,
+                                    color: token.colorWarningText
                                   }}
                                 >
                                   {structureData.emotion}
@@ -2640,26 +2651,26 @@ export default function Outline() {
                               <div style={{
                                 marginTop: 12,
                                 padding: '10px 12px',
-                                background: 'linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%)',
-                                borderLeft: '3px solid #3b82f6',
-                                borderRadius: 6
+                                background: token.colorInfoBg,
+                                borderLeft: `3px solid ${token.colorInfo}`,
+                                borderRadius: token.borderRadius
                               }}>
                                 <div style={{
                                   fontSize: 13,
                                   fontWeight: 600,
-                                  color: '#1e40af',
+                                  color: token.colorInfo,
                                   marginBottom: 6
                                 }}>
                                   🎯 叙事目标
                                 </div>
                                 <div style={{
                                   fontSize: 12,
-                                  color: '#1e3a8a',
+                                  color: token.colorText,
                                   lineHeight: '1.6',
                                   padding: '6px 10px',
-                                  background: '#ffffff',
-                                  border: '1px solid #93c5fd',
-                                  borderRadius: 4,
+                                  background: token.colorBgContainer,
+                                  border: `1px solid ${token.colorInfoBorder}`,
+                                  borderRadius: token.borderRadiusSM,
                                   overflow: 'hidden',
                                   textOverflow: 'ellipsis',
                                   whiteSpace: 'nowrap'
@@ -2676,7 +2687,7 @@ export default function Outline() {
                         <div style={{
                           marginTop: 16,
                           paddingTop: 12,
-                          borderTop: '1px solid #f0f0f0',
+                          borderTop: `1px solid ${token.colorBorderSecondary}`,
                           display: 'flex',
                           justifyContent: 'flex-end',
                           gap: 8
@@ -2729,8 +2740,8 @@ export default function Outline() {
               position: 'sticky',
               bottom: 0,
               zIndex: 10,
-              backgroundColor: 'var(--color-bg-container)',
-              borderTop: '1px solid #f0f0f0',
+              backgroundColor: token.colorBgContainer,
+              borderTop: `1px solid ${token.colorBorderSecondary}`,
               padding: isMobile ? '8px 0' : '10px 0',
               display: 'flex',
               justifyContent: 'flex-end'

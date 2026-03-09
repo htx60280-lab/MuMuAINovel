@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Typography, Space, Divider, Badge, Grid } from 'antd';
+import { Typography, Space, Divider, Badge, Grid, theme } from 'antd';
 import { GithubOutlined, CopyrightOutlined, HeartFilled, ClockCircleOutlined } from '@ant-design/icons';
 import { VERSION_INFO, getVersionString } from '../config/version';
 import { checkLatestVersion } from '../services/versionService';
@@ -17,6 +17,8 @@ export default function AppFooter({ sidebarWidth = 0 }: AppFooterProps) {
   const [hasUpdate, setHasUpdate] = useState(false);
   const [latestVersion, setLatestVersion] = useState('');
   const [releaseUrl, setReleaseUrl] = useState('');
+  const { token } = theme.useToken();
+  const alphaColor = (color: string, alpha: number) => `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
 
   useEffect(() => {
     // 检查版本更新（每次都重新检查）
@@ -55,11 +57,11 @@ export default function AppFooter({ sidebarWidth = 0 }: AppFooterProps) {
         right: 0,
         backdropFilter: 'blur(20px) saturate(180%)',
         WebkitBackdropFilter: 'blur(20px) saturate(180%)',
-        borderTop: '1px solid var(--color-border)',
+        borderTop: `1px solid ${token.colorBorder}`,
         padding: isMobile ? '8px 12px' : '10px 16px',
         zIndex: 100,
-        boxShadow: 'var(--shadow-card)',
-        backgroundColor: 'rgba(255, 255, 255, 0.8)', // 半透明背景以支持 backdrop-filter
+        boxShadow: `0 -2px 16px ${alphaColor(token.colorText, 0.08)}`,
+        backgroundColor: alphaColor(token.colorBgContainer, 0.82), // 半透明背景以支持 backdrop-filter
         transition: 'left 0.3s ease', // 平滑过渡
       }}
     >

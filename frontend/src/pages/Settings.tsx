@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect } from 'react';
-import { Card, Form, Input, Button, Select, Slider, InputNumber, message, Space, Typography, Spin, Modal, Alert, Grid, Tabs, List, Tag, Popconfirm, Empty, Row, Col } from 'antd';
+import { Card, Form, Input, Button, Select, Slider, InputNumber, message, Space, Typography, Spin, Modal, Alert, Grid, Tabs, List, Tag, Popconfirm, Empty, Row, Col, theme } from 'antd';
 import { SaveOutlined, DeleteOutlined, ReloadOutlined, InfoCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, ThunderboltOutlined, PlusOutlined, EditOutlined, CopyOutlined, WarningOutlined, SwapOutlined } from '@ant-design/icons';
 import { settingsApi, mcpPluginApi } from '../services/api';
 import type { SettingsUpdate, APIKeyPreset, PresetCreateRequest, APIKeyPresetConfig, TaskType, TaskChannelItem } from '../types';
@@ -12,6 +12,7 @@ const { TextArea } = Input;
 
 export default function SettingsPage() {
   const screens = useBreakpoint();
+  const { token } = theme.useToken();
   const isMobile = !screens.md; // md断点是768px
   const [form] = Form.useForm();
   const [modal, contextHolder] = Modal.useModal();
@@ -1118,10 +1119,10 @@ export default function SettingsPage() {
                 <List.Item
                   key={preset.id}
                   style={{
-                    background: isActive ? '#f0f5ff' : 'transparent',
+                    background: isActive ? token.colorPrimaryBg : 'transparent',
                     padding: '16px',
                     marginBottom: '8px',
-                    border: isActive ? '2px solid #1890ff' : '1px solid #f0f0f0',
+                    border: isActive ? `2px solid ${token.colorPrimary}` : `1px solid ${token.colorBorderSecondary}`,
                     borderRadius: '8px',
                   }}
                   actions={[
@@ -1171,7 +1172,7 @@ export default function SettingsPage() {
                     avatar={
                       isActive && (
                         <CheckCircleOutlined
-                          style={{ fontSize: '24px', color: '#52c41a' }}
+                          style={{ fontSize: '24px', color: token.colorSuccess }}
                         />
                       )
                     }
@@ -1184,7 +1185,7 @@ export default function SettingsPage() {
                     description={
                       <Space direction="vertical" size="small" style={{ width: '100%' }}>
                         {preset.description && (
-                          <div style={{ color: '#666' }}>{preset.description}</div>
+                          <div style={{ color: token.colorTextSecondary }}>{preset.description}</div>
                         )}
                         <Space wrap>
                           <Tag color={getProviderColor(preset.config.api_provider)}>
@@ -1194,7 +1195,7 @@ export default function SettingsPage() {
                           <Tag>温度: {preset.config.temperature}</Tag>
                           <Tag>Tokens: {preset.config.max_tokens}</Tag>
                         </Space>
-                        <div style={{ fontSize: '12px', color: '#999' }}>
+                        <div style={{ fontSize: '12px', color: token.colorTextTertiary }}>
                           创建于: {new Date(preset.created_at).toLocaleString()}
                         </div>
                       </Space>
@@ -1214,7 +1215,7 @@ export default function SettingsPage() {
       {contextHolder}
       <div style={{
         minHeight: '90vh',
-        background: 'linear-gradient(180deg, var(--color-bg-base) 0%, #EEF2F3 100%)',
+        background: `linear-gradient(180deg, ${token.colorBgLayout} 0%, ${token.colorFillTertiary} 100%)`,
         padding: isMobile ? '20px 16px 70px' : '24px 24px 70px',
         display: 'flex',
         flexDirection: 'column',
@@ -1231,9 +1232,9 @@ export default function SettingsPage() {
           <Card
             variant="borderless"
             style={{
-              background: 'linear-gradient(135deg, var(--color-primary) 0%, #5A9BA5 50%, var(--color-primary-hover) 100%)',
+              background: `linear-gradient(135deg, ${token.colorPrimary} 0%, color-mix(in srgb, ${token.colorPrimary} 78%, ${token.colorBgContainer} 22%) 50%, ${token.colorPrimaryHover} 100%)`,
               borderRadius: isMobile ? 16 : 24,
-              boxShadow: '0 12px 40px rgba(77, 128, 136, 0.25), 0 4px 12px rgba(0, 0, 0, 0.06)',
+              boxShadow: token.boxShadowSecondary,
               marginBottom: isMobile ? 20 : 24,
               border: 'none',
               position: 'relative',
@@ -1248,10 +1249,10 @@ export default function SettingsPage() {
             <Row align="middle" justify="space-between" gutter={[16, 16]} style={{ position: 'relative', zIndex: 1 }}>
               <Col xs={24} sm={12}>
                 <Space direction="vertical" size={4}>
-                  <Title level={isMobile ? 3 : 2} style={{ margin: 0, color: '#fff', textShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
+                  <Title level={isMobile ? 3 : 2} style={{ margin: 0, color: token.colorTextLightSolid, textShadow: `0 2px 4px ${token.colorBgMask}` }}>
                     AI API 设置
                   </Title>
-                  <Text style={{ fontSize: isMobile ? 12 : 14, color: 'rgba(255,255,255,0.85)', marginLeft: isMobile ? 40 : 48 }}>
+                  <Text style={{ fontSize: isMobile ? 12 : 14, color: token.colorTextLightSolid, opacity: 0.85, marginLeft: isMobile ? 40 : 48 }}>
                     配置AI接口参数，管理多个API配置预设
                   </Text>
                 </Space>
@@ -1266,9 +1267,9 @@ export default function SettingsPage() {
           <Card
             variant="borderless"
             style={{
-              background: 'rgba(255, 255, 255, 0.95)',
+              background: token.colorBgContainer,
               borderRadius: isMobile ? 12 : 16,
-              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
+              boxShadow: token.boxShadow,
               flex: 1,
             }}
             styles={{
@@ -1798,7 +1799,7 @@ export default function SettingsPage() {
                                           marginTop: '8px'
                                         }}>
                                           <div style={{ marginBottom: '4px', fontWeight: 500 }}>AI 响应预览:</div>
-                                          <div style={{ color: '#595959' }}>{testResult.response_preview}</div>
+                                          <div style={{ color: token.colorTextSecondary }}>{testResult.response_preview}</div>
                                         </div>
                                       )}
                                       <div style={{ color: 'var(--color-success)', fontSize: isMobile ? '12px' : '13px', marginTop: '4px' }}>
@@ -1811,10 +1812,10 @@ export default function SettingsPage() {
                                         <div style={{
                                           fontSize: isMobile ? '12px' : '13px',
                                           padding: '8px 12px',
-                                          background: '#fff2e8',
+                                          background: token.colorWarningBg,
                                           borderRadius: '4px',
-                                          border: '1px solid #ffbb96',
-                                          color: '#d4380d'
+                                          border: `1px solid ${token.colorWarningBorder}`,
+                                          color: token.colorWarningText
                                         }}>
                                           <strong>错误信息:</strong> {testResult.error}
                                         </div>

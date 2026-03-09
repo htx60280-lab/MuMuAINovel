@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, Pagination, Typography } from 'antd';
+﻿import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, Pagination, Typography, theme } from 'antd';
 import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, FormOutlined, PlusOutlined, ReadOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { useChapterSync } from '../store/hooks';
@@ -26,8 +26,30 @@ const WORLD_STATE_KNOWN_KEYS = new Set([
   'inventory',
   'relationships',
   'status_changes',
-  'last_time_reference'
+  'last_time_reference',
+  '_state_hidden_keys'
 ]);
+
+const normalizeWorldStateKey = (key: string) => {
+  const trimmed = key.trim();
+  const aliases: Record<string, string> = {
+    cultivation_level: '修为',
+    realm: '修为',
+    stage: '修为',
+    主角修为: '修为',
+    主角境界: '修为',
+    wealth: '财富',
+    money: '财富',
+    gold: '财富',
+    生命值: 'hp',
+    血量: 'hp',
+    气血: 'hp',
+    health: 'hp',
+    health_points: 'hp',
+  };
+
+  return aliases[trimmed] || aliases[trimmed.toLowerCase()] || trimmed;
+};
 
 // 从 localStorage 读取缓存的字数
 const getCachedWordCount = (): number => {
@@ -56,6 +78,7 @@ const setCachedWordCount = (value: number): void => {
 
 export default function Chapters() {
   const { currentProject, chapters, outlines, setCurrentChapter, setCurrentProject } = useStore();
+  const { token } = theme.useToken();
   const [modal, contextHolder] = Modal.useModal();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -726,7 +749,21 @@ export default function Chapters() {
 
   // 世界状态展示辅助方法
   const worldState = ((currentProject as { world_state?: Record<string, unknown> }).world_state || {}) as Record<string, unknown>;
-  const worldStateExtraEntries = Object.entries(worldState).filter(([key]) => !WORLD_STATE_KNOWN_KEYS.has(key));
+  const worldStateExtraEntries = Object.entries(worldState).filter(([key]) => {
+    if (WORLD_STATE_KNOWN_KEYS.has(key)) {
+      return false;
+    }
+
+    const statusChanges = worldState.status_changes;
+    if (statusChanges && typeof statusChanges === 'object' && !Array.isArray(statusChanges)) {
+      const normalizedKey = normalizeWorldStateKey(key);
+      if (Object.keys(statusChanges).some((statusKey) => normalizeWorldStateKey(statusKey) === normalizedKey)) {
+        return false;
+      }
+    }
+
+    return true;
+  });
 
   const formatWorldStateValue = (value: unknown): string => {
     if (value === null || value === undefined) return '';
@@ -741,14 +778,14 @@ export default function Chapters() {
 
   const renderWorldStateText = (value: unknown, emptyText = '未设定') => {
     if (value === null || value === undefined || value === '') {
-      return <span style={{ color: 'rgba(0,0,0,0.45)' }}>{emptyText}</span>;
+      return <span style={{ color: token.colorTextTertiary }}>{emptyText}</span>;
     }
     return <span style={{ wordBreak: 'break-word' }}>{formatWorldStateValue(value)}</span>;
   };
 
   const renderWorldStateArray = (value: unknown, emptyText = '暂无') => {
     if (!Array.isArray(value) || value.length === 0) {
-      return <span style={{ color: 'rgba(0,0,0,0.45)' }}>{emptyText}</span>;
+      return <span style={{ color: token.colorTextTertiary }}>{emptyText}</span>;
     }
     return (
       <Space wrap>
@@ -763,11 +800,11 @@ export default function Chapters() {
 
   const renderWorldStatePairs = (value: unknown, emptyText = '暂无') => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      return <span style={{ color: 'rgba(0,0,0,0.45)' }}>{emptyText}</span>;
+      return <span style={{ color: token.colorTextTertiary }}>{emptyText}</span>;
     }
     const entries = Object.entries(value as Record<string, unknown>);
     if (entries.length === 0) {
-      return <span style={{ color: 'rgba(0,0,0,0.45)' }}>{emptyText}</span>;
+      return <span style={{ color: token.colorTextTertiary }}>{emptyText}</span>;
     }
     return (
       <Space direction="vertical" size={4} style={{ width: '100%' }}>
@@ -2037,7 +2074,7 @@ export default function Chapters() {
         backgroundColor: 'var(--color-bg-container)',
         padding: isMobile ? '12px 0' : '16px 0',
         marginBottom: isMobile ? 12 : 16,
-        borderBottom: '1px solid #f0f0f0',
+        borderBottom: `1px solid ${token.colorBorderSecondary}`,
         display: 'flex',
         flexDirection: isMobile ? 'column' : 'row',
         gap: isMobile ? 12 : 0,
@@ -2142,9 +2179,9 @@ export default function Chapters() {
                 style={{
                   padding: '16px',
                   marginBottom: 16,
-                  background: '#fff',
+                  background: token.colorBgContainer,
                   borderRadius: 8,
-                  border: '1px solid #f0f0f0',
+                  border: `1px solid ${token.colorBorderSecondary}`,
                   flexDirection: isMobile ? 'column' : 'row',
                   alignItems: isMobile ? 'flex-start' : 'center',
                 }}
@@ -2221,7 +2258,7 @@ export default function Chapters() {
                         </span>
                         <Space wrap size={isMobile ? 4 : 8}>
                           <Tag color={getStatusColor(item.status)}>{getStatusText(item.status)}</Tag>
-                          <Badge count={`${item.word_count || 0}字`} style={{ backgroundColor: 'var(--color-success)' }} />
+                          <Badge count={`${item.word_count || 0}字`} style={{ backgroundColor: token.colorSuccess, color: token.colorTextLightSolid }} />
                           {renderAnalysisStatus(item.id)}
                           {!canGenerateChapter(item) && (
                             <Tag icon={<LockOutlined />} color="warning" title={getGenerateDisabledReason(item)}>
@@ -2235,12 +2272,12 @@ export default function Chapters() {
                       item.content ? (
                         <Paragraph
                           ellipsis={{ rows: isMobile ? 3 : 6, expandable: true, symbol: '展开' }}
-                          style={{ marginTop: 8, marginBottom: 0, color: 'rgba(0,0,0,0.65)', lineHeight: 1.6, fontSize: isMobile ? 12 : 14 }}
+                          style={{ marginTop: 8, marginBottom: 0, color: token.colorTextSecondary, lineHeight: 1.6, fontSize: isMobile ? 12 : 14 }}
                         >
                           {item.content}
                         </Paragraph>
                       ) : (
-                        <span style={{ color: 'rgba(0,0,0,0.45)', fontSize: isMobile ? 12 : 14 }}>暂无内容</span>
+                        <span style={{ color: token.colorTextTertiary, fontSize: isMobile ? 12 : 14 }}>暂无内容</span>
                       )
                     }
                   />
@@ -2336,9 +2373,9 @@ export default function Chapters() {
                 }
                 style={{
                   marginBottom: 16,
-                  background: '#fff',
+                  background: token.colorBgContainer,
                   borderRadius: 8,
-                  border: '1px solid #f0f0f0',
+                  border: `1px solid ${token.colorBorderSecondary}`,
                 }}
               >
                 <List
@@ -2444,7 +2481,7 @@ export default function Chapters() {
                               </span>
                               <Space wrap size={isMobile ? 4 : 8}>
                                 <Tag color={getStatusColor(item.status)}>{getStatusText(item.status)}</Tag>
-                                <Badge count={`${item.word_count || 0}字`} style={{ backgroundColor: 'var(--color-success)' }} />
+                                <Badge count={`${item.word_count || 0}字`} style={{ backgroundColor: token.colorSuccess, color: token.colorTextLightSolid }} />
                                 {renderAnalysisStatus(item.id)}
                                 {!canGenerateChapter(item) && (
                                   <Tag icon={<LockOutlined />} color="warning" title={getGenerateDisabledReason(item)}>
@@ -2478,12 +2515,12 @@ export default function Chapters() {
                           item.content ? (
                             <Paragraph
                               ellipsis={{ rows: isMobile ? 3 : 6, expandable: true, symbol: '展开' }}
-                              style={{ marginTop: 8, marginBottom: 0, color: 'rgba(0,0,0,0.65)', lineHeight: 1.6, fontSize: isMobile ? 12 : 14 }}
+                              style={{ marginTop: 8, marginBottom: 0, color: token.colorTextSecondary, lineHeight: 1.6, fontSize: isMobile ? 12 : 14 }}
                             >
                               {item.content}
                             </Paragraph>
                           ) : (
-                              <span style={{ color: 'rgba(0,0,0,0.45)', fontSize: isMobile ? 12 : 14 }}>暂无内容</span>
+                              <span style={{ color: token.colorTextTertiary, fontSize: isMobile ? 12 : 14 }}>暂无内容</span>
                             )
                           }
                         />
@@ -3472,3 +3509,4 @@ export default function Chapters() {
     </div>
   );
 }
+

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Input, Button, Space, Typography, message, Spin, Modal } from 'antd';
+import { Card, Input, Button, Space, Typography, message, Spin, Modal, theme } from 'antd';
 import { SendOutlined, ArrowLeftOutlined, ReloadOutlined } from '@ant-design/icons';
 import { inspirationApi } from '../services/api';
 import { AIProjectGenerator, type GenerationConfig } from '../components/AIProjectGenerator';
@@ -52,6 +52,7 @@ const Inspiration: React.FC = () => {
   const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState<Step>('idea');
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  const { token } = theme.useToken();
 
   useEffect(() => {
     const handleResize = () => {
@@ -852,7 +853,7 @@ const Inspiration: React.FC = () => {
           height: isMobile ? 'calc(100vh - 280px)' : 600,
           overflowY: 'auto',
           marginBottom: 16,
-          boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+          boxShadow: `0 8px 24px color-mix(in srgb, ${token.colorTextBase} 20%, transparent)`,
           scrollBehavior: 'smooth'
         }}
       >
@@ -873,16 +874,16 @@ const Inspiration: React.FC = () => {
                 maxWidth: '80%',
                 padding: '12px 16px',
                 borderRadius: 12,
-                background: msg.type === 'ai' ? 'var(--color-bg-container)' : 'var(--color-primary)',
-                color: msg.type === 'ai' ? 'var(--color-text-primary)' : '#fff',
+                background: msg.type === 'ai' ? token.colorBgContainer : token.colorPrimary,
+                color: msg.type === 'ai' ? token.colorText : token.colorWhite,
                 boxShadow: msg.type === 'ai'
-                  ? 'var(--shadow-card)'
-                  : 'var(--shadow-primary)',
+                  ? `0 2px 10px color-mix(in srgb, ${token.colorTextBase} 12%, transparent)`
+                  : `0 4px 14px color-mix(in srgb, ${token.colorPrimary} 30%, transparent)`,
               }}>
                 <Paragraph
                   style={{
                     margin: 0,
-                    color: msg.type === 'ai' ? 'var(--color-text-primary)' : '#fff',
+                    color: msg.type === 'ai' ? token.colorText : token.colorWhite,
                     whiteSpace: 'pre-wrap'
                   }}
                 >
@@ -904,13 +905,13 @@ const Inspiration: React.FC = () => {
                         style={{
                           cursor: msg.optionsDisabled ? 'not-allowed' : 'pointer',
                           border: msg.isMultiSelect && selectedOptions.includes(option)
-                            ? '2px solid var(--color-primary)'
-                            : '1px solid var(--color-border)',
+                            ? `2px solid ${token.colorPrimary}`
+                            : `1px solid ${token.colorBorder}`,
                           background: msg.optionsDisabled
-                            ? 'var(--color-bg-layout)'
+                            ? token.colorBgLayout
                             : msg.isMultiSelect && selectedOptions.includes(option)
-                              ? 'var(--color-bg-spotlight)'
-                              : 'var(--color-bg-container)',
+                              ? token.colorPrimaryBg
+                              : token.colorBgContainer,
                           opacity: msg.optionsDisabled ? 0.6 : 1,
                           animation: 'floatIn 0.6s ease-out',
                           animationDelay: `${optIndex * 0.1}s`,
@@ -920,7 +921,7 @@ const Inspiration: React.FC = () => {
                         onMouseEnter={(e) => {
                           if (!msg.optionsDisabled) {
                             e.currentTarget.style.transform = 'translateY(-2px) scale(1.02)';
-                            e.currentTarget.style.boxShadow = 'var(--shadow-elevated)';
+                            e.currentTarget.style.boxShadow = `0 8px 22px color-mix(in srgb, ${token.colorTextBase} 14%, transparent)`;
                           }
                         }}
                         onMouseLeave={(e) => {
@@ -947,7 +948,7 @@ const Inspiration: React.FC = () => {
 
                     {/* 反馈优化区域 - 新增 */}
                     {msg.canRefine && !msg.optionsDisabled && !msg.isMultiSelect && (
-                      <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed var(--color-border)' }}>
+                      <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${token.colorBorder}` }}>
                         {showFeedbackInput === index ? (
                           <Space direction="vertical" style={{ width: '100%' }} size="small">
                             <TextArea
@@ -1018,7 +1019,7 @@ const Inspiration: React.FC = () => {
       </Card>
 
       <Card
-        style={{ boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+        style={{ boxShadow: `0 4px 12px color-mix(in srgb, ${token.colorTextBase} 14%, transparent)` }}
         styles={{ body: { padding: 12 } }}
       >
         <Space.Compact style={{ width: '100%' }}>
@@ -1059,7 +1060,7 @@ const Inspiration: React.FC = () => {
   return (
     <div style={{
       minHeight: '100dvh',
-      background: 'var(--color-bg-base)',
+      background: token.colorBgBase,
     }}>
       {contextHolder}
       <style>
@@ -1105,8 +1106,8 @@ const Inspiration: React.FC = () => {
         position: 'sticky',
         top: 0,
         zIndex: 100,
-        background: 'var(--color-primary)',
-        boxShadow: 'var(--shadow-header)',
+        background: token.colorPrimary,
+        boxShadow: `0 6px 20px color-mix(in srgb, ${token.colorPrimary} 30%, transparent)`,
       }}>
         <div style={{
           maxWidth: 1200,
@@ -1121,9 +1122,9 @@ const Inspiration: React.FC = () => {
             onClick={handleBack}
             size={isMobile ? 'middle' : 'large'}
             style={{
-              background: 'rgba(255,255,255,0.2)',
-              borderColor: 'rgba(255,255,255,0.3)',
-              color: '#fff',
+              background: `color-mix(in srgb, ${token.colorWhite} 20%, transparent)`,
+              borderColor: `color-mix(in srgb, ${token.colorWhite} 30%, transparent)`,
+              color: token.colorWhite,
             }}
           >
             {isMobile ? '返回' : '返回首页'}
@@ -1134,8 +1135,8 @@ const Inspiration: React.FC = () => {
               level={isMobile ? 4 : 2}
               style={{
                 margin: 0,
-                color: '#fff',
-                textShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                color: token.colorWhite,
+                textShadow: '0 2px 4px color-mix(in srgb, var(--ant-color-black) 18%, transparent)',
                 lineHeight: 1.2
               }}
             >
@@ -1162,9 +1163,9 @@ const Inspiration: React.FC = () => {
               }}
               size={isMobile ? 'middle' : 'large'}
               style={{
-                background: 'rgba(255,255,255,0.2)',
-                borderColor: 'rgba(255,255,255,0.3)',
-                color: '#fff',
+                background: `color-mix(in srgb, ${token.colorWhite} 20%, transparent)`,
+                borderColor: `color-mix(in srgb, ${token.colorWhite} 30%, transparent)`,
+                color: token.colorWhite,
               }}
             >
               {isMobile ? '重新' : '重新开始'}

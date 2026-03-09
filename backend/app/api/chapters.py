@@ -56,6 +56,7 @@ from app.services.memory_service import memory_service
 from app.services.foreshadow_service import foreshadow_service
 from app.services.chapter_regenerator import ChapterRegenerator
 from app.services.chapter_memory_service import ChapterMemoryService
+from app.services.world_state_utils import normalize_world_state_structure, normalize_state_change_payload
 from app.services.critic_agent import CriticAgent
 from app.services.context_manager import ContextAgent
 from app.services.chapter_guardrails import ChapterGuardrails, GuardrailResult
@@ -172,7 +173,7 @@ async def _build_quick_review_data(
     else:
         previous_summaries = "无前文摘要"
 
-    world_state = project.world_state or {}
+    world_state = normalize_world_state_structure(project.world_state)
     inventory_value = world_state.get("inventory", [])
     if isinstance(inventory_value, list):
         inventory_text = ", ".join(inventory_value) or "无"
@@ -666,6 +667,9 @@ async def get_chapter(
     # 验证用户权限
     user_id = getattr(request.state, 'user_id', None)
     await verify_project_access(chapter.project_id, user_id, db)
+
+    if isinstance(chapter.state_change_log, dict):
+        chapter.state_change_log = normalize_state_change_payload(chapter.state_change_log)
     
     return chapter
 
@@ -754,8 +758,9 @@ async def update_chapter(
     user_id = getattr(request.state, 'user_id', None)
     await verify_project_access(chapter.project_id, user_id, db)
     
-    # 记录旧字数
+    # 记录旧字数和旧内容
     old_word_count = chapter.word_count or 0
+    old_content = chapter.content or ""
     
     # 更新字段
     update_data = chapter_update.model_dump(exclude_unset=True)
@@ -766,6 +771,7 @@ async def update_chapter(
     if "content" in update_data:
         new_word_count = len(chapter.content) if chapter.content else 0
         chapter.word_count = new_word_count
+        content_changed = (chapter.content or "") != old_content
         
         # 更新项目字数
         result = await db.execute(
@@ -828,7 +834,7 @@ async def update_chapter(
                 logger.warning(f"⚠️ 清理伏笔数据失败: {str(e)}")
 
             logger.info(f"🗑️ 章节 {chapter_id[:8]} 内容已清空，已清理分析、记忆和伏笔数据")
-        else:
+        elif content_changed:
             # 内容被替换（非清空），后台重建向量数据
             _chapter_id = chapter.id
             _content = chapter.content
@@ -869,6 +875,8 @@ async def update_chapter(
                 _chapter_id, _content, _chapter_number, _project_id,
                 _user_id, user_ai_service
             )
+        else:
+            logger.info(f"ℹ️ 章节内容未变化，跳过向量重建和状态重新提取: chapter={chapter_id[:8]}")
     
     await db.commit()
     await db.refresh(chapter)
@@ -5107,7 +5115,11 @@ async def reextract_chapter_state(
             raise HTTPException(status_code=500, detail="状态提取失败，AI 返回为空")
 
         # 保存状态变更
-        success = await service._save_chapter_state_change(chapter_id, state_change)
+        success = await service._save_chapter_state_change(
+            chapter_id,
+            state_change,
+            content_hash=service._build_content_hash(chapter.content or "")
+        )
 
         if not success:
             raise HTTPException(status_code=500, detail="保存状态变更失败")

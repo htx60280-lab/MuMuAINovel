@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Card, Table, Tag, Button, Space, message, Modal, Form, Select, Slider, Input, Tabs, AutoComplete } from 'antd';
+import { Card, Table, Tag, Button, Space, message, Modal, Form, Select, Slider, Input, Tabs, AutoComplete, theme } from 'antd';
 import { PlusOutlined, ApartmentOutlined, UserOutlined, EditOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import axios from 'axios';
@@ -45,6 +45,7 @@ export default function Relationships() {
   const [editingRelationship, setEditingRelationship] = useState<Relationship | null>(null);
   const [form] = Form.useForm();
   const [modal, contextHolder] = Modal.useModal();
+  const { token } = theme.useToken();
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [pageSize, setPageSize] = useState(10);
   const [currentPage, setCurrentPage] = useState(1);
@@ -393,7 +394,7 @@ export default function Relationships() {
                       key={category}
                       size="small"
                       title={categoryLabels[category] || category}
-                      headStyle={{ backgroundColor: '#f5f5f5' }}
+                      headStyle={{ backgroundColor: token.colorFillAlter }}
                     >
                       <Space direction="vertical" style={{ width: '100%' }}>
                         {types.map(type => (

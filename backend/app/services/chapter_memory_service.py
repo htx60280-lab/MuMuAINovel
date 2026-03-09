@@ -1,4 +1,4 @@
-"""章节记忆存储服务 - Data Agent
+﻿"""章节记忆存储服务 - Data Agent
 
 负责在章节生成后处理和存储记忆切片到 pgvector：
 1. 将章节内容切分为 300-500 字的片段
@@ -9,6 +9,7 @@
 import uuid
 import re
 import json
+import hashlib
 from typing import List, Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, text
@@ -20,6 +21,14 @@ from app.models.chapter import Chapter
 from app.models.project import Project
 from app.config import settings, EMBEDDING_DIMENSIONS
 from app.services.qdrant_service import QdrantService
+from app.services.world_state_utils import (
+    get_suppressed_state_keys,
+    is_absolute_state_key,
+    normalize_state_change_payload,
+    normalize_status_changes,
+    normalize_world_state_structure,
+    set_suppressed_state_keys,
+)
 from qdrant_client.http import models as qdrant_models
 from app.logger import get_logger
 
@@ -33,6 +42,12 @@ class ChapterMemoryService:
     CHUNK_OVERLAP = 50  # 切片重叠（字符）
     MIN_CHUNK_SIZE = 100  # 最小切片大小
 
+    @staticmethod
+    def _serialize_state_payload(payload: Dict[str, Any]) -> str:
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+    STATE_META_KEY = "_meta"
+    STATE_HASH_KEY = "content_hash"
     def __init__(
         self,
         db: AsyncSession,
@@ -56,6 +71,52 @@ class ChapterMemoryService:
         self._embedding_client: Optional[AsyncOpenAI] = None
         self._embedding_model: Optional[str] = None
         self._qdrant_service: Optional[QdrantService] = None
+
+    def _build_content_hash(self, content: str) -> str:
+        normalized_content = (content or "").replace("\r\n", "\n").strip()
+        return hashlib.sha1(normalized_content.encode("utf-8")).hexdigest()
+
+    async def _get_existing_state_change_log(self, chapter_id: str) -> Optional[Dict[str, Any]]:
+        result = await self.db.execute(
+            select(Chapter.state_change_log).where(Chapter.id == chapter_id)
+        )
+        state_change_log = result.scalar_one_or_none()
+        if isinstance(state_change_log, dict):
+            return state_change_log
+        return None
+
+    async def _get_project_suppressed_state_keys(self, project_id: str) -> set[str]:
+        result = await self.db.execute(
+            select(Project.world_state).where(Project.id == project_id)
+        )
+        world_state = result.scalar_one_or_none()
+        return get_suppressed_state_keys(world_state)
+
+    def _state_change_matches_content(
+        self,
+        state_change_log: Optional[Dict[str, Any]],
+        content_hash: str
+    ) -> bool:
+        if not isinstance(state_change_log, dict):
+            return False
+        meta = state_change_log.get(self.STATE_META_KEY)
+        if not isinstance(meta, dict):
+            return False
+        return meta.get(self.STATE_HASH_KEY) == content_hash
+
+    def _attach_state_meta(
+        self,
+        state_change: Dict[str, Any],
+        content_hash: Optional[str]
+    ) -> Dict[str, Any]:
+        normalized_state_change = dict(state_change)
+        meta = normalized_state_change.get(self.STATE_META_KEY)
+        normalized_meta = dict(meta) if isinstance(meta, dict) else {}
+        if content_hash:
+            normalized_meta[self.STATE_HASH_KEY] = content_hash
+        if normalized_meta:
+            normalized_state_change[self.STATE_META_KEY] = normalized_meta
+        return normalized_state_change
 
     @property
     def embedding_model(self) -> str:
@@ -169,6 +230,9 @@ class ChapterMemoryService:
             return result
 
         try:
+            content_hash = self._build_content_hash(content)
+            existing_state_change_log = await self._get_existing_state_change_log(chapter_id)
+
             # 1. 删除该章节的旧切片
             await self._delete_chapter_memories(chapter_id)
 
@@ -191,15 +255,25 @@ class ChapterMemoryService:
 
             # 4. 提取状态变更（如果有 AI 服务）
             if self.ai_service:
-                state_change = await self._extract_state_change(
-                    content=content,
-                    project_id=project_id,
-                    chapter_number=chapter_number
-                )
+                if self._state_change_matches_content(existing_state_change_log, content_hash):
+                    state_change = existing_state_change_log
+                    logger.info(
+                        f"⏭️ 状态提取跳过：章节内容未变化 chapter_id={chapter_id[:8]}"
+                    )
+                else:
+                    state_change = await self._extract_state_change(
+                        content=content,
+                        project_id=project_id,
+                        chapter_number=chapter_number
+                    )
                 if state_change:
                     result["state_change_log"] = state_change
                     # 保存状态变更到章节表（摘要和钩子立即同步，但状态变化暂存待确认）
-                    await self._save_chapter_state_change(chapter_id, state_change)
+                    await self._save_chapter_state_change(
+                        chapter_id,
+                        state_change,
+                        content_hash=content_hash
+                    )
                     # 从所有章节重建世界状态（避免重写旧章节时状态回退）
                     world_state_updated = await self._rebuild_world_state_from_chapters(project_id)
                     if not world_state_updated:
@@ -227,7 +301,8 @@ class ChapterMemoryService:
     async def _save_chapter_state_change(
         self,
         chapter_id: str,
-        state_change: Dict[str, Any]
+        state_change: Dict[str, Any],
+        content_hash: Optional[str] = None
     ) -> bool:
         """
         将状态变更保存到章节表的 state_change_log 字段，
@@ -255,10 +330,18 @@ class ChapterMemoryService:
                 logger.warning(f"⚠️ 状态变更数据类型错误: {type(state_change).__name__}")
                 return False
 
-            chapter.state_change_log = state_change
+            normalized_state_change = normalize_state_change_payload(state_change)
+            if not normalized_state_change:
+                logger.info(f"ℹ️ 状态变更规范化后为空，跳过保存: chapter_id={chapter_id[:8]}")
+                return False
+
+            normalized_state_change = self._attach_state_meta(normalized_state_change, content_hash)
+
+            old_payload = chapter.state_change_log if isinstance(chapter.state_change_log, dict) else None
+            chapter.state_change_log = normalized_state_change
 
             # 同步摘要到 chapter.summary
-            summary = state_change.get("summary")
+            summary = normalized_state_change.get("summary")
             if isinstance(summary, str) and summary:
                 chapter.summary = summary
                 logger.info(f"📝 摘要已同步: {summary[:50]}...")
@@ -266,7 +349,7 @@ class ChapterMemoryService:
                 logger.warning(f"⚠️ summary 类型错误: {type(summary).__name__}")
 
             # 同步钩子到 chapter.end_hook
-            end_hook = state_change.get("end_hook")
+            end_hook = normalized_state_change.get("end_hook")
             if isinstance(end_hook, dict) and end_hook:
                 chapter.end_hook = end_hook
                 hook_type = end_hook.get("type", "未知")
@@ -280,7 +363,10 @@ class ChapterMemoryService:
 
             await self.db.commit()
 
-            logger.info(f"✅ 状态变更已保存并自动生效: chapter_id={chapter_id[:8]}")
+            if old_payload and self._serialize_state_payload(old_payload) == self._serialize_state_payload(normalized_state_change):
+                logger.info(f"ℹ️ 状态变更内容未变化，已保持幂等: chapter_id={chapter_id[:8]}")
+            else:
+                logger.info(f"✅ 状态变更已保存并自动生效: chapter_id={chapter_id[:8]}")
             return True
 
         except Exception as e:
@@ -550,6 +636,11 @@ class ChapterMemoryService:
                 return None
 
             state_change = json.loads(cleaned_json)
+            suppressed_keys = await self._get_project_suppressed_state_keys(project_id)
+            state_change = normalize_state_change_payload(state_change, suppressed_keys=suppressed_keys)
+            if not state_change:
+                logger.info(f"ℹ️ 状态变更规范化后为空: 第{chapter_number}章")
+                return None
             logger.info(f"✅ 状态变更提取完成: {state_change.get('summary', '')[:50]}")
             return state_change
 
@@ -589,40 +680,56 @@ class ChapterMemoryService:
 
             # 深拷贝当前状态，避免 SQLAlchemy JSON 列就地修改不触发 dirty 检测
             import copy
-            current_state = copy.deepcopy(project.world_state) if project.world_state else {}
+            current_state = normalize_world_state_structure(project.world_state)
+            suppressed_keys = get_suppressed_state_keys(current_state)
+            normalized_state_change = normalize_state_change_payload(
+                state_change,
+                suppressed_keys=suppressed_keys,
+            )
+            if not normalized_state_change:
+                logger.info(f"ℹ️ 状态变更被过滤，跳过全局状态更新: project_id={project_id[:8]}")
+                return True
 
             # 合并位置变更
-            if state_change.get("location_change", {}).get("to"):
-                current_state["current_location"] = state_change["location_change"]["to"]
+            if normalized_state_change.get("location_change", {}).get("to"):
+                current_state["current_location"] = normalized_state_change["location_change"]["to"]
 
             # 合并物品变更
             inventory = current_state.get("inventory", [])
-            for item in state_change.get("items_gained", []):
+            for item in normalized_state_change.get("items_gained", []):
                 if item not in inventory:
                     inventory.append(item)
-            for item in state_change.get("items_lost", []):
+            for item in normalized_state_change.get("items_lost", []):
                 if item in inventory:
                     inventory.remove(item)
             current_state["inventory"] = inventory
 
             # 合并状态变更
-            for key, value in state_change.get("status_changes", {}).items():
-                if isinstance(value, (int, float)):
-                    current_state[key] = current_state.get(key, 0) + value
-                else:
-                    current_state[key] = value
+            status_changes = normalized_state_change.get("status_changes", {})
+            if status_changes:
+                existing_status_changes = current_state.get("status_changes", {})
+                if not isinstance(existing_status_changes, dict):
+                    existing_status_changes = {}
+
+                for key, value in status_changes.items():
+                    if isinstance(value, (int, float)) and not is_absolute_state_key(key):
+                        existing_status_changes[key] = existing_status_changes.get(key, 0) + value
+                    else:
+                        existing_status_changes[key] = value
+
+                current_state["status_changes"] = existing_status_changes
 
             # 合并关系变更
             relationships = current_state.get("relationships", {})
-            relationships.update(state_change.get("relationships", {}))
+            relationships.update(normalized_state_change.get("relationships", {}))
             current_state["relationships"] = relationships
 
             # 更新时间
-            if state_change.get("time_passed"):
-                current_state["last_time_reference"] = state_change["time_passed"]
+            if normalized_state_change.get("time_passed"):
+                current_state["last_time_reference"] = normalized_state_change["time_passed"]
 
             # 赋值新对象，确保 SQLAlchemy 检测到变化
-            project.world_state = current_state
+            project.world_state = normalize_world_state_structure(current_state)
             await self.db.commit()
 
             logger.info(f"✅ 全局状态已更新: project_id={project_id[:8]}")
@@ -653,8 +760,6 @@ class ChapterMemoryService:
             是否重建成功
         """
         try:
-            import copy
-
             # 获取项目
             result = await self.db.execute(
                 select(Project).where(Project.id == project_id)
@@ -664,13 +769,8 @@ class ChapterMemoryService:
                 logger.warning(f"⚠️ 项目不存在: {project_id}")
                 return False
 
-            # 保存当前世界状态中的用户自定义字段
-            # 标准字段由章节状态重建，自定义字段保留
-            standard_fields = {
-                "current_location", "inventory", "relationships",
-                "status_changes", "last_time_reference"
-            }
-            old_state = project.world_state if isinstance(project.world_state, dict) else {}
+            old_state = normalize_world_state_structure(project.world_state)
+            suppressed_keys = get_suppressed_state_keys(project.world_state)
 
             # 收集所有章节中出现过的 status_changes 键（这些会被重建）
             chapter_status_keys = set()
@@ -683,7 +783,10 @@ class ChapterMemoryService:
             )
             for ch in result_temp.scalars().all():
                 if isinstance(ch.state_change_log, dict):
-                    status_changes = ch.state_change_log.get("status_changes", {})
+                    status_changes = normalize_status_changes(
+                        ch.state_change_log.get("status_changes", {}),
+                        suppressed_keys=suppressed_keys,
+                    )
                     if isinstance(status_changes, dict):
                         chapter_status_keys.update(status_changes.keys())
 
@@ -692,14 +795,19 @@ class ChapterMemoryService:
             # 2. 不在章节 status_changes 中出现过的字段（用户手动添加的状态）
             custom_fields = {}
             for k, v in old_state.items():
-                if k not in standard_fields and k not in chapter_status_keys:
+                if k == "_state_hidden_keys":
+                    continue
+                if k not in {"current_location", "inventory", "relationships", "status_changes", "last_time_reference"} and k not in chapter_status_keys:
                     custom_fields[k] = v
 
             # 保存 status_changes 中的自定义字段
             old_status_changes = old_state.get("status_changes", {})
             custom_status_fields = {}
             if isinstance(old_status_changes, dict):
-                custom_status_fields = {k: v for k, v in old_status_changes.items() if k not in chapter_status_keys}
+                custom_status_fields = {
+                    k: v for k, v in old_status_changes.items()
+                    if k not in chapter_status_keys and k not in suppressed_keys
+                }
 
             # 查询所有有 state_change_log 的章节，按 chapter_number 升序
             result = await self.db.execute(
@@ -716,7 +824,10 @@ class ChapterMemoryService:
             current_state: Dict[str, Any] = {}
 
             for chapter in chapters:
-                state_change = chapter.state_change_log
+                state_change = normalize_state_change_payload(
+                    chapter.state_change_log,
+                    suppressed_keys=suppressed_keys,
+                )
                 if not isinstance(state_change, dict):
                     continue
 
@@ -734,28 +845,20 @@ class ChapterMemoryService:
                         inventory.remove(item)
                 current_state["inventory"] = inventory
 
-                # 合并状态变更
-                # 定义绝对状态字段（这些字段使用最新值替换，而非累加）
-                absolute_state_fields = {
-                    "修为", "境界", "cultivation_level", "realm", "stage",
-                    "职位", "position", "title", "rank", "grade",
-                    "身份", "identity", "status", "role"
-                }
-
                 status_changes_dict = {}
-                for key, value in state_change.get("status_changes", {}).items():
-                    # 检查是否为绝对状态字段（使用最新值替换）
-                    is_absolute = any(field in key.lower() for field in absolute_state_fields)
-
-                    if isinstance(value, (int, float)) and not is_absolute:
+                for key, value in normalize_status_changes(
+                    state_change.get("status_changes", {}),
+                    suppressed_keys=suppressed_keys,
+                ).items():
+                    if isinstance(value, (int, float)) and not is_absolute_state_key(key):
                         # 数值型且非绝对状态：累加（如 hp、经验值等）
-                        current_state[key] = current_state.get(key, 0) + value
+                        previous_status = current_state.get("status_changes", {}).get(key, 0)
+                        if not isinstance(previous_status, (int, float)):
+                            previous_status = 0
+                        status_changes_dict[key] = previous_status + value
                     else:
                         # 字符串型或绝对状态：直接替换（如修为境界、职位等）
-                        current_state[key] = value
-
-                    # 同时记录到 status_changes 字典中（用于前端显示）
-                    status_changes_dict[key] = current_state[key]
+                        status_changes_dict[key] = value
 
                 # 更新 status_changes 字段（合并而非替换）
                 if status_changes_dict:
@@ -784,11 +887,9 @@ class ChapterMemoryService:
                     current_state["status_changes"] = {}
                 current_state["status_changes"].update(custom_status_fields)
 
-                # 同时将自定义状态字段也写入顶层（保持数据结构一致性）
-                current_state.update(custom_status_fields)
-
             # 赋值新对象，确保 SQLAlchemy 检测到变化
-            project.world_state = current_state
+            current_state = set_suppressed_state_keys(current_state, suppressed_keys)
+            project.world_state = normalize_world_state_structure(current_state)
             await self.db.commit()
 
             custom_count = len(custom_fields) + len(custom_status_fields)
@@ -1175,3 +1276,4 @@ async def create_chapter_memory_service(
         ai_service=ai_service,
         user_embedding_config=user_embedding_config
     )
+

@@ -24,6 +24,7 @@ from app.models.chapter_memory import ChapterMemory
 from app.models.memory import StoryMemory
 from app.models.foreshadow import Foreshadow
 from app.models.key_event import KeyEvent
+from app.services.world_state_utils import normalize_world_state_structure
 from app.logger import get_logger
 from app.config import settings, EMBEDDING_DIMENSIONS
 from app.services.qdrant_service import QdrantService
@@ -785,7 +786,7 @@ class ContextAgent:
                 parts.append("【世界观设定】\n" + "\n".join(wb_parts))
 
         # 全局状态容器（State Machine）
-        world_state = worldbuilding.get("world_state") if worldbuilding else None
+        world_state = normalize_world_state_structure(worldbuilding.get("world_state")) if worldbuilding else None
         if world_state:
             state_parts = []
             if world_state.get("current_location"):
@@ -798,11 +799,10 @@ class ContextAgent:
                 state_parts.append("人物关系:\n" + "\n".join(rel_lines))
             if world_state.get("last_time_reference"):
                 state_parts.append(f"时间线: {world_state['last_time_reference']}")
-            # 其他状态属性
-            for key, value in world_state.items():
-                if key not in ["current_location", "inventory", "relationships", "last_time_reference"]:
-                    if isinstance(value, (int, float)):
-                        state_parts.append(f"{key}: {value}")
+            status_changes = world_state.get("status_changes")
+            if isinstance(status_changes, dict) and status_changes:
+                state_lines = [f"  - {key}: {value}" for key, value in status_changes.items()]
+                state_parts.append("状态变化:\n" + "\n".join(state_lines))
 
             if state_parts:
                 parts.append("【当前全局状态】\n" + "\n".join(state_parts))

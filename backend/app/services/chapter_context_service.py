@@ -135,7 +135,7 @@ class OneToManyContextBuilder:
     
     上下文构建策略：
     - 章节大纲：本章expansion_plan + 最近10章expansion_plan摘要
-    - 衔接锚点：统一上一章末尾500字 + 摘要
+    - 衔接锚点：使用上一章完整内容 + 摘要
     - 角色信息：完整版（含年龄、外貌、背景、关系、组织、职业）
     - 职业详情：独立的chapter_careers字段，含完整阶段体系
     - 相关记忆：始终启用（相关度>0.6）
@@ -143,7 +143,7 @@ class OneToManyContextBuilder:
     """
     
     # 配置常量
-    ENDING_LENGTH = 3000         # 统一衔接长度3000字
+    ENDING_LENGTH = None         # 使用上一章完整内容，不再截断
     MEMORY_COUNT = 10            # 记忆条数
     MEMORY_SIMILARITY_THRESHOLD = 0.6  # 记忆相关度阈值
     RECENT_CHAPTERS_COUNT = 10   # 最近章节规划数量
@@ -219,7 +219,7 @@ class OneToManyContextBuilder:
             )
             logger.info(f"  ✅ 最近章节规划: {len(context.recent_chapters_context or '')}字符")
         
-        # === 衔接锚点（统一500字 + 摘要）===
+        # === 衔接锚点（上一章完整内容 + 摘要）===
         if chapter_number == 1:
             context.continuation_point = None
             context.previous_chapter_summary = None
@@ -702,7 +702,7 @@ class OneToManyContextBuilder:
         # 1. 提取结尾内容
         if prev_chapter.content:
             content = prev_chapter.content.strip()
-            if len(content) <= max_length:
+            if not max_length or len(content) <= max_length:
                 result_info['ending_text'] = content
             else:
                 result_info['ending_text'] = content[-max_length:]
@@ -968,7 +968,7 @@ class OneToOneContextBuilder:
     2. target_word_count
     
     P1重要信息：
-    1. 上一章完整内容的最后500字作为参考
+    1. 上一章完整内容作为参考
     2. 根据structure中的characters获取角色信息（含职业）
     
     P2参考信息：
@@ -1031,7 +1031,7 @@ class OneToOneContextBuilder:
         logger.info(f"  ✅ P0-大纲信息: {len(context.chapter_outline)}字符")
         
         # === P1-重要信息 ===
-        # 1. 获取上一章内容的最后500字和上一章摘要
+        # 1. 获取上一章完整内容和上一章摘要
         if chapter_number > 1:
             # 查找前一章：不假设序号连续，取 chapter_number < 当前章 中最大的
             prev_chapter_result = await db.execute(
@@ -1045,11 +1045,8 @@ class OneToOneContextBuilder:
             
             if prev_chapter and prev_chapter.content:
                 content = prev_chapter.content.strip()
-                if len(content) <= 500:
-                    context.continuation_point = content
-                else:
-                    context.continuation_point = content[-500:]
-                logger.info(f"  ✅ P1-上一章内容(最后500字): {len(context.continuation_point)}字符")
+                context.continuation_point = content
+                logger.info(f"  ✅ P1-上一章完整内容: {len(context.continuation_point)}字符")
                 
                 # 获取上一章摘要（优先从记忆系统获取，其次使用章节摘要）
                 summary_result = await db.execute(

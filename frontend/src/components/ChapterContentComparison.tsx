@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Modal, Button, Card, Statistic, Row, Col, message } from 'antd';
+import { Modal, Button, Card, Statistic, Row, Col, message, theme } from 'antd';
 import { CheckOutlined, CloseOutlined, SwapOutlined } from '@ant-design/icons';
 import ReactDiffViewer from 'react-diff-viewer-continued';
 
@@ -26,13 +26,49 @@ const ChapterContentComparison: React.FC<ChapterContentComparisonProps> = ({
   onApply,
   onDiscard
 }) => {
+  const { token } = theme.useToken();
   const [applying, setApplying] = useState(false);
   const [viewMode, setViewMode] = useState<'split' | 'unified'>('split');
   const [modal, contextHolder] = Modal.useModal();
 
   const originalWordCount = originalContent.length;
   const wordCountDiff = wordCount - originalWordCount;
-  const wordCountDiffPercent = ((wordCountDiff / originalWordCount) * 100).toFixed(1);
+  const wordCountDiffPercent = originalWordCount === 0
+    ? (wordCount === 0 ? '0.0' : '100.0')
+    : ((wordCountDiff / originalWordCount) * 100).toFixed(1);
+
+  const wordCountDiffColor = wordCount > originalWordCount
+    ? token.colorSuccess
+    : wordCount < originalWordCount
+      ? token.colorError
+      : token.colorTextSecondary;
+
+  const diffViewerStyles = {
+    variables: {
+      light: {
+        diffViewerBackground: token.colorBgContainer,
+        addedBackground: token.colorSuccessBg,
+        addedColor: token.colorText,
+        removedBackground: token.colorErrorBg,
+        removedColor: token.colorText,
+        wordAddedBackground: token.colorSuccessBorder,
+        wordRemovedBackground: token.colorErrorBorder,
+        addedGutterBackground: token.colorSuccessBg,
+        removedGutterBackground: token.colorErrorBg,
+        gutterBackground: token.colorBgLayout,
+        gutterBackgroundDark: token.colorBgContainer,
+        highlightBackground: token.colorWarningBg,
+        highlightGutterBackground: token.colorWarningBorder,
+      },
+    },
+    line: {
+      padding: '10px 2px',
+      fontSize: '14px',
+      lineHeight: '20px',
+      whiteSpace: 'pre-wrap' as const,
+      wordBreak: 'break-word' as const
+    }
+  };
 
   const handleApply = async () => {
     setApplying(true);
@@ -161,7 +197,7 @@ const ChapterContentComparison: React.FC<ChapterContentComparisonProps> = ({
               title="字数变化"
               value={wordCountDiff}
               suffix="字"
-              valueStyle={{ color: wordCountDiff > 0 ? 'var(--color-success)' : 'var(--color-error)' }}
+              valueStyle={{ color: wordCountDiffColor }}
               prefix={wordCountDiff > 0 ? '+' : ''}
             />
           </Col>
@@ -170,7 +206,11 @@ const ChapterContentComparison: React.FC<ChapterContentComparisonProps> = ({
               title="变化比例"
               value={wordCountDiffPercent}
               suffix="%"
-              valueStyle={{ color: Math.abs(parseFloat(wordCountDiffPercent)) < 10 ? 'var(--color-primary)' : 'var(--color-warning)' }}
+              valueStyle={{
+                color: Math.abs(parseFloat(wordCountDiffPercent)) < 10
+                  ? token.colorPrimary
+                  : token.colorWarning
+              }}
               prefix={wordCountDiff > 0 ? '+' : ''}
             />
           </Col>
@@ -181,7 +221,7 @@ const ChapterContentComparison: React.FC<ChapterContentComparisonProps> = ({
       <div style={{
         maxHeight: 'calc(90vh - 300px)',
         overflow: 'auto',
-        border: '1px solid var(--color-border)',
+        border: `1px solid ${token.colorBorder}`,
         borderRadius: 4
       }}>
         <ReactDiffViewer
@@ -192,32 +232,7 @@ const ChapterContentComparison: React.FC<ChapterContentComparisonProps> = ({
           rightTitle="新内容"
           showDiffOnly={false}
           useDarkTheme={false}
-          styles={{
-            variables: {
-              light: {
-                diffViewerBackground: '#fff', // Keep white for diff viewer readability
-                addedBackground: 'var(--color-success-bg)',
-                addedColor: 'var(--color-text-primary)',
-                removedBackground: 'var(--color-error-bg)',
-                removedColor: 'var(--color-text-primary)',
-                wordAddedBackground: 'var(--color-success-border)',
-                wordRemovedBackground: 'var(--color-error-border)',
-                addedGutterBackground: 'var(--color-success-bg)',
-                removedGutterBackground: 'var(--color-error-bg)',
-                gutterBackground: 'var(--color-bg-layout)',
-                gutterBackgroundDark: 'var(--color-bg-container)',
-                highlightBackground: 'var(--color-warning-bg)',
-                highlightGutterBackground: 'var(--color-warning-border)',
-              },
-            },
-            line: {
-              padding: '10px 2px',
-              fontSize: '14px',
-              lineHeight: '20px',
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word'
-            }
-          }}
+          styles={diffViewerStyles}
         />
       </div>
       </Modal>

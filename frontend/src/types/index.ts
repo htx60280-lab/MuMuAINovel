@@ -1,4 +1,4 @@
-// 用户类型定义
+﻿// 用户类型定义
 export interface User {
   user_id: string;
   username: string;
@@ -129,8 +129,9 @@ export interface Project {
     current_location?: string | null;
     inventory?: string[];
     relationships?: Record<string, string>;
-    status_changes?: Record<string, number>;
+    status_changes?: Record<string, unknown>;
     last_time_reference?: string | null;
+    _state_hidden_keys?: string[];
     [key: string]: unknown;
   };
   chapter_count?: number;
@@ -1178,3 +1179,4 @@ export const PROMPT_CATEGORIES: Record<string, string> = {
   game: '游戏/电竞',
   other: '其他',
 };
+

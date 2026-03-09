@@ -20,6 +20,7 @@ import {
   Pagination,
   Alert,
   Statistic,
+  theme,
 } from 'antd';
 import {
   SearchOutlined,
@@ -120,6 +121,7 @@ export default function PromptWorkshop() {
   const [activeTab, setActiveTab] = useState<string>('browse');
   
   const isMobile = window.innerWidth <= 768;
+  const { token } = theme.useToken();
   
   // 判断是否为服务端管理员
   const isServerAdmin = serviceStatus?.mode === 'server' && currentUser?.is_admin;
@@ -431,7 +433,7 @@ export default function PromptWorkshop() {
                       borderRadius: 12,
                       display: 'flex',
                       flexDirection: 'column',
-                      border: '1px solid #f0f0f0',
+                      border: `1px solid ${token.colorBorderSecondary}`,
                     }}
                     bodyStyle={{ 
                       padding: 16, 
@@ -446,7 +448,7 @@ export default function PromptWorkshop() {
                       <Tooltip title={item.is_liked ? '取消点赞' : '点赞'} key="like">
                         <span onClick={() => handleLike(item)}>
                           {item.is_liked ? (
-                            <HeartFilled style={{ color: '#ff4d4f' }} />
+                            <HeartFilled style={{ color: token.colorError }} />
                           ) : (
                             <HeartOutlined />
                           )}
@@ -489,7 +491,7 @@ export default function PromptWorkshop() {
                         style={{
                           fontSize: 12,
                           marginBottom: 0,
-                          backgroundColor: '#fafafa',
+                          backgroundColor: token.colorFillQuaternary,
                           padding: 8,
                           borderRadius: 4,
                           flex: 1,
@@ -512,7 +514,7 @@ export default function PromptWorkshop() {
                       )}
                     </div>
                     
-                    <div style={{ marginTop: 8, color: '#999', fontSize: 12 }}>
+                    <div style={{ marginTop: 8, color: token.colorTextTertiary, fontSize: 12 }}>
                       <Space>
                         <span><UserOutlined /> {item.author_name || '匿名'}</span>
                       </Space>
@@ -569,7 +571,7 @@ export default function PromptWorkshop() {
                 }}
               >
                 <Card
-                  style={{ borderRadius: 12, height: '100%', border: '1px solid #f0f0f0' }}
+                  style={{ borderRadius: 12, height: '100%', border: `1px solid ${token.colorBorderSecondary}` }}
                   bodyStyle={{ padding: 16 }}
                 >
                   <Space direction="vertical" style={{ width: '100%' }}>
@@ -599,7 +601,7 @@ export default function PromptWorkshop() {
                       />
                     )}
                     
-                    <div style={{ fontSize: 12, color: '#999' }}>
+                    <div style={{ fontSize: 12, color: token.colorTextTertiary }}>
                       提交时间: {sub.created_at ? new Date(sub.created_at).toLocaleDateString() : '-'}
                     </div>
                     
@@ -802,7 +804,7 @@ export default function PromptWorkshop() {
           </Col>
           <Col span={4}>
             <Card size="small">
-              <Statistic title="待审核" value={adminStats.total_pending} valueStyle={{ color: '#faad14' }} />
+              <Statistic title="待审核" value={adminStats.total_pending} valueStyle={{ color: token.colorWarning }} />
             </Card>
           </Col>
           <Col span={4}>
@@ -853,13 +855,13 @@ export default function PromptWorkshop() {
                 }}
               >
                 <Card
-                  style={{ borderRadius: 12, border: '1px solid #f0f0f0' }}
+                  style={{ borderRadius: 12, border: `1px solid ${token.colorBorderSecondary}` }}
                   bodyStyle={{ padding: 16 }}
                   actions={[
                     <Button
                       key="approve"
                       type="link"
-                      style={{ color: '#52c41a' }}
+                      style={{ color: token.colorSuccess }}
                       onClick={() => {
                         setReviewingSubmission(sub);
                         reviewForm.setFieldsValue({
@@ -887,7 +889,7 @@ export default function PromptWorkshop() {
                       {sub.prompt_content}
                     </Paragraph>
                     
-                    <div style={{ fontSize: 11, color: '#999' }}>
+                    <div style={{ fontSize: 11, color: token.colorTextTertiary }}>
                       <div>提交者: {sub.submitter_name || '未知'}</div>
                       <div>来源: {sub.source_instance}</div>
                       <div>时间: {sub.created_at ? new Date(sub.created_at).toLocaleDateString() : '-'}</div>
@@ -928,7 +930,7 @@ export default function PromptWorkshop() {
                 }}
               >
                 <Card
-                  style={{ borderRadius: 12, border: '1px solid #f0f0f0' }}
+                  style={{ borderRadius: 12, border: `1px solid ${token.colorBorderSecondary}` }}
                   bodyStyle={{ padding: 16 }}
                   actions={[
                     <Tooltip title="编辑" key="edit">
@@ -965,7 +967,7 @@ export default function PromptWorkshop() {
                       {item.prompt_content}
                     </Paragraph>
                     
-                    <div style={{ fontSize: 11, color: '#999' }}>
+                    <div style={{ fontSize: 11, color: token.colorTextTertiary }}>
                       <Space>
                         <span><HeartOutlined /> {item.like_count || 0}</span>
                         <span><DownloadOutlined /> {item.download_count || 0}</span>
@@ -992,7 +994,7 @@ export default function PromptWorkshop() {
           alignItems: 'center',
           padding: isMobile ? '12px 0' : '16px 0',
           marginBottom: isMobile ? 12 : 16,
-          borderBottom: '1px solid #f0f0f0',
+          borderBottom: `1px solid ${token.colorBorderSecondary}`,
           flexWrap: 'wrap',
           gap: 12,
         }}>
@@ -1185,7 +1187,7 @@ export default function PromptWorkshop() {
             )}
             
             <div style={{
-              backgroundColor: '#f5f5f5',
+              backgroundColor: token.colorFillSecondary,
               padding: 16,
               borderRadius: 8,
               marginBottom: 16,
@@ -1236,7 +1238,7 @@ export default function PromptWorkshop() {
         {reviewingSubmission && (
           <div>
             <div style={{
-              backgroundColor: '#f5f5f5',
+              backgroundColor: token.colorFillSecondary,
               padding: 16,
               borderRadius: 8,
               marginBottom: 16,

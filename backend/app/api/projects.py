@@ -32,6 +32,7 @@ from app.schemas.import_export import (
 from app.services.import_export_service import ImportExportService
 from app.services.memory_service import memory_service
 from app.logger import get_logger
+from app.services.world_state_utils import normalize_world_state_structure
 from app.utils.data_consistency import (
     run_full_data_consistency_check,
     fix_missing_organization_records,
@@ -145,6 +146,8 @@ async def get_project(
             raise HTTPException(status_code=404, detail="项目不存在")
         
         logger.info(f"获取项目详情成功: {project.title}")
+        if project.world_state:
+            project.world_state = normalize_world_state_structure(project.world_state)
         return project
     except HTTPException:
         raise
@@ -184,11 +187,17 @@ async def update_project(
         
         update_data = project_update.model_dump(exclude_unset=True)
         logger.debug(f"更新字段: {list(update_data.keys())}")
+
+        if "world_state" in update_data:
+            update_data["world_state"] = normalize_world_state_structure(update_data["world_state"])
+
         for field, value in update_data.items():
             setattr(project, field, value)
         
         await db.commit()
         await db.refresh(project)
+        if project.world_state:
+            project.world_state = normalize_world_state_structure(project.world_state)
         logger.info(f"项目更新成功: {project.title}")
         return project
     except HTTPException:

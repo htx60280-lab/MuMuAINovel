@@ -1,6 +1,36 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { Modal, Input, Button, Space, Tag, message, Popconfirm } from 'antd';
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
+
+const HIDDEN_WORLD_STATE_KEYS = new Set(['_state_hidden_keys']);
+
+const syncHiddenKeys = (state: Record<string, any>, predicate: (item: string) => boolean) => {
+  if (!Array.isArray(state._state_hidden_keys)) {
+    return state._state_hidden_keys;
+  }
+  return state._state_hidden_keys.filter((item: string) => !predicate(item));
+};
+
+const normalizeStateKey = (key: string) => {
+  const trimmed = key.trim();
+  const aliases: Record<string, string> = {
+    cultivation_level: '修为',
+    realm: '修为',
+    stage: '修为',
+    主角修为: '修为',
+    主角境界: '修为',
+    wealth: '财富',
+    money: '财富',
+    gold: '财富',
+    生命值: 'hp',
+    血量: 'hp',
+    气血: 'hp',
+    health: 'hp',
+    health_points: 'hp',
+  };
+
+  return aliases[trimmed] || aliases[trimmed.toLowerCase()] || trimmed;
+};
 
 interface WorldStateEditorProps {
   visible: boolean;
@@ -41,14 +71,31 @@ const WorldStateEditor: React.FC<WorldStateEditorProps> = ({
   const updateField = (key: string, value: any) => {
     setEditingState(prev => ({
       ...prev,
-      [key]: value
+      [key]: value,
+      _state_hidden_keys: syncHiddenKeys(prev, (item: string) => normalizeStateKey(item) === normalizeStateKey(key))
     }));
   };
 
   const deleteField = (key: string) => {
     setEditingState(prev => {
+      const normalizedKey = normalizeStateKey(key);
       const newState = { ...prev };
       delete newState[key];
+
+      if (prev.status_changes && typeof prev.status_changes === 'object' && !Array.isArray(prev.status_changes)) {
+        const nextStatusChanges = { ...prev.status_changes };
+        Object.keys(nextStatusChanges).forEach((childKey) => {
+          if (normalizeStateKey(childKey) === normalizedKey) {
+            delete nextStatusChanges[childKey];
+          }
+        });
+        newState.status_changes = nextStatusChanges;
+      }
+
+      const existing = Array.isArray(prev._state_hidden_keys) ? prev._state_hidden_keys : [];
+      if (!existing.some((item: string) => normalizeStateKey(item) === normalizedKey)) {
+        newState._state_hidden_keys = [...existing, normalizedKey];
+      }
       return newState;
     });
   };
@@ -74,18 +121,42 @@ const WorldStateEditor: React.FC<WorldStateEditorProps> = ({
       [parentKey]: {
         ...(prev[parentKey] || {}),
         [childKey]: value
-      }
+      },
+      ...(parentKey === 'status_changes'
+        ? {
+            _state_hidden_keys: syncHiddenKeys(prev, (item: string) => normalizeStateKey(item) === normalizeStateKey(childKey)),
+          }
+        : {})
     }));
   };
 
   const deleteObjectField = (parentKey: string, childKey: string) => {
     setEditingState(prev => {
+      const normalizedKey = normalizeStateKey(childKey);
       const newParent = { ...(prev[parentKey] || {}) };
       delete newParent[childKey];
-      return {
+      const nextState = {
         ...prev,
         [parentKey]: newParent
       };
+
+      if (parentKey === 'status_changes') {
+        Object.keys(nextState).forEach((key) => {
+          if (key === 'status_changes' || HIDDEN_WORLD_STATE_KEYS.has(key)) {
+            return;
+          }
+          if (normalizeStateKey(key) === normalizedKey) {
+            delete nextState[key];
+          }
+        });
+
+        const existing = Array.isArray(prev._state_hidden_keys) ? prev._state_hidden_keys : [];
+        if (!existing.some((item: string) => normalizeStateKey(item) === normalizedKey)) {
+          nextState._state_hidden_keys = [...existing, normalizedKey];
+        }
+      }
+
+      return nextState;
     });
   };
 
@@ -97,9 +168,11 @@ const WorldStateEditor: React.FC<WorldStateEditorProps> = ({
       message.warning('请输入字段名');
       return;
     }
+    const normalizedKey = normalizeStateKey(newFieldKey.trim());
     setEditingState(prev => ({
       ...prev,
-      [newFieldKey.trim()]: newFieldValue.trim()
+      [normalizedKey]: newFieldValue.trim(),
+      _state_hidden_keys: syncHiddenKeys(prev, (item: string) => normalizeStateKey(item) === normalizedKey)
     }));
     setNewFieldKey('');
     setNewFieldValue('');
@@ -252,9 +325,29 @@ const WorldStateEditor: React.FC<WorldStateEditorProps> = ({
       styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
     >
       <div style={{ padding: '16px 0' }}>
-        {Object.entries(editingState).map(([key, value]) => (
-          <div key={key}>{renderFieldEditor(key, value)}</div>
-        ))}
+        {(() => {
+          const statusKeys = new Set(
+            editingState.status_changes && typeof editingState.status_changes === 'object' && !Array.isArray(editingState.status_changes)
+              ? Object.keys(editingState.status_changes).map((key) => normalizeStateKey(key))
+              : []
+          );
+
+          return Object.entries(editingState)
+            .filter(([key]) => {
+              if (HIDDEN_WORLD_STATE_KEYS.has(key)) {
+                return false;
+              }
+
+              if (key === 'status_changes') {
+                return true;
+              }
+
+              return !statusKeys.has(normalizeStateKey(key));
+            })
+            .map(([key, value]) => (
+              <div key={key}>{renderFieldEditor(key, value)}</div>
+            ));
+        })()}
 
         <div style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid #f0f0f0' }}>
           <div style={{ fontWeight: 500, marginBottom: 8 }}>添加新字段</div>
@@ -283,3 +376,4 @@ const WorldStateEditor: React.FC<WorldStateEditorProps> = ({
 };
 
 export default WorldStateEditor;
+

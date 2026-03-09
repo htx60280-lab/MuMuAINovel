@@ -16,6 +16,7 @@ import {
   Alert,
   Row,
   Col,
+  theme,
 } from 'antd';
 import {
   PlusOutlined,
@@ -39,7 +40,32 @@ const { TextArea } = Input;
 export default function MCPPluginsPage() {
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [form] = Form.useForm();
-  
+  const { token } = theme.useToken();
+  const alphaColor = (color: string, alpha: number) => `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
+
+  const statusStyles = {
+    success: {
+      bg: token.colorSuccessBg,
+      border: token.colorSuccessBorder,
+      text: token.colorSuccessText,
+    },
+    info: {
+      bg: token.colorInfoBg,
+      border: token.colorInfoBorder,
+      text: token.colorInfoText,
+    },
+    warning: {
+      bg: token.colorWarningBg,
+      border: token.colorWarningBorder,
+      text: token.colorWarningText,
+    },
+    error: {
+      bg: token.colorErrorBg,
+      border: token.colorErrorBorder,
+      text: token.colorErrorText,
+    },
+  };
+
   // 响应式监听窗口大小变化
   useEffect(() => {
     const handleResize = () => {
@@ -261,25 +287,25 @@ export default function MCPPluginsPage() {
           width: isMobile ? '95%' : 700,
           content: (
             <div style={{ padding: '8px 0' }}>
-              <div style={{ marginBottom: 16, padding: 12, background: 'var(--color-success-bg)', border: '1px solid var(--color-success-border)', borderRadius: 8 }}>
-                <Typography.Text strong style={{ color: 'var(--color-success)', fontSize: 14 }}>
+              <div style={{ marginBottom: 16, padding: 12, background: statusStyles.success.bg, border: `1px solid ${statusStyles.success.border}`, borderRadius: 8 }}>
+                <Typography.Text strong style={{ color: statusStyles.success.text, fontSize: 14 }}>
                   ✓ {result.message}
                 </Typography.Text>
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12, marginBottom: 16 }}>
-                <div style={{ padding: 12, background: 'var(--color-bg-layout)', borderRadius: 8 }}>
+                <div style={{ padding: 12, background: token.colorBgLayout, borderRadius: 8 }}>
                   <Text type="secondary" style={{ fontSize: 12 }}>可用工具数</Text>
                   <div><Text strong style={{ fontSize: 20 }}>{result.tools_count || 0}</Text></div>
                 </div>
-                <div style={{ padding: 12, background: 'var(--color-bg-layout)', borderRadius: 8 }}>
+                <div style={{ padding: 12, background: token.colorBgLayout, borderRadius: 8 }}>
                   <Text type="secondary" style={{ fontSize: 12 }}>总响应时间</Text>
                   <div><Text strong style={{ fontSize: 20 }}>{result.response_time_ms?.toFixed(0) || 0}ms</Text></div>
                 </div>
               </div>
 
               {aiChoice && (
-                <div style={{ marginBottom: 12, padding: 12, background: 'var(--color-info-bg)', borderRadius: 8, border: '1px solid var(--color-info-border)' }}>
+                <div style={{ marginBottom: 12, padding: 12, background: statusStyles.info.bg, borderRadius: 8, border: `1px solid ${statusStyles.info.border}` }}>
                   <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>🤖 AI选择的工具</Text>
                   <Text code strong>{aiChoice}</Text>
                   {callTime && <Tag color="blue" style={{ marginLeft: 8 }}>{callTime}</Tag>}
@@ -289,7 +315,7 @@ export default function MCPPluginsPage() {
               {paramsStr && (
                 <div style={{ marginBottom: 12 }}>
                   <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>📝 调用参数</Text>
-                  <pre style={{ margin: 0, padding: 8, background: 'var(--color-bg-layout)', borderRadius: 4, fontSize: 12, overflow: 'auto', maxHeight: 100 }}>
+                  <pre style={{ margin: 0, padding: 8, background: token.colorBgLayout, borderRadius: 4, fontSize: 12, overflow: 'auto', maxHeight: 100 }}>
                     {(() => { try { return JSON.stringify(JSON.parse(paramsStr), null, 2); } catch { return paramsStr; } })()}
                   </pre>
                 </div>
@@ -298,7 +324,7 @@ export default function MCPPluginsPage() {
               {resultStr && (
                 <div style={{ marginBottom: 12 }}>
                   <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>📊 返回结果预览</Text>
-                  <pre style={{ margin: 0, padding: 8, background: 'var(--color-bg-layout)', borderRadius: 4, fontSize: 11, overflow: 'auto', maxHeight: 150, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                  <pre style={{ margin: 0, padding: 8, background: token.colorBgLayout, borderRadius: 4, fontSize: 11, overflow: 'auto', maxHeight: 150, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                     {resultStr}
                   </pre>
                 </div>
@@ -326,13 +352,13 @@ export default function MCPPluginsPage() {
               {result.error && (
                 <div style={{
                   padding: 16,
-                  background: 'var(--color-error-bg)',
-                  border: '1px solid var(--color-error-border)',
+                  background: statusStyles.error.bg,
+                  border: `1px solid ${statusStyles.error.border}`,
                   borderRadius: 8,
                   marginBottom: 16
                 }}>
                   <Text strong style={{ fontSize: 14, display: 'block', marginBottom: 8 }}>错误信息:</Text>
-                  <Text style={{ fontSize: 13, color: 'var(--color-error)', fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                  <Text style={{ fontSize: 13, color: statusStyles.error.text, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                     {result.error}
                   </Text>
                 </div>
@@ -341,8 +367,8 @@ export default function MCPPluginsPage() {
               {result.suggestions && result.suggestions.length > 0 && (
                 <div style={{
                   padding: 16,
-                  background: 'var(--color-warning-bg)',
-                  border: '1px solid var(--color-warning-border)',
+                  background: statusStyles.warning.bg,
+                  border: `1px solid ${statusStyles.warning.border}`,
                   borderRadius: 8,
                   marginBottom: 16
                 }}>
@@ -418,24 +444,24 @@ export default function MCPPluginsPage() {
           width: isMobile ? '95%' : 700,
           content: (
             <div style={{ padding: '8px 0' }}>
-              <div style={{ marginBottom: 16, padding: 12, background: 'var(--color-success-bg)', border: '1px solid var(--color-success-border)', borderRadius: 8 }}>
-                <Typography.Text strong style={{ color: 'var(--color-success)', fontSize: 14 }}>
+              <div style={{ marginBottom: 16, padding: 12, background: statusStyles.success.bg, border: `1px solid ${statusStyles.success.border}`, borderRadius: 8 }}>
+                <Typography.Text strong style={{ color: statusStyles.success.text, fontSize: 14 }}>
                   ✓ {result.message}
                 </Typography.Text>
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12, marginBottom: 16 }}>
-                <div style={{ padding: 12, background: 'var(--color-bg-layout)', borderRadius: 8 }}>
+                <div style={{ padding: 12, background: token.colorBgLayout, borderRadius: 8 }}>
                   <Text type="secondary" style={{ fontSize: 12 }}>API 提供商</Text>
                   <div><Text strong style={{ fontSize: 16 }}>{result.provider}</Text></div>
                 </div>
-                <div style={{ padding: 12, background: 'var(--color-bg-layout)', borderRadius: 8 }}>
+                <div style={{ padding: 12, background: token.colorBgLayout, borderRadius: 8 }}>
                   <Text type="secondary" style={{ fontSize: 12 }}>响应时间</Text>
                   <div><Text strong style={{ fontSize: 16 }}>{result.response_time_ms?.toFixed(0) || 0}ms</Text></div>
                 </div>
               </div>
 
-              <div style={{ marginBottom: 12, padding: 12, background: 'var(--color-info-bg)', borderRadius: 8, border: '1px solid var(--color-info-border)' }}>
+              <div style={{ marginBottom: 12, padding: 12, background: statusStyles.info.bg, borderRadius: 8, border: `1px solid ${statusStyles.info.border}` }}>
                 <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>🔧 模型信息</Text>
                 <Text code strong>{result.model}</Text>
                 {result.details?.finish_reason && (
@@ -446,7 +472,7 @@ export default function MCPPluginsPage() {
               {result.details && (
                 <div style={{ marginBottom: 12 }}>
                   <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>📊 检测详情</Text>
-                  <div style={{ padding: 8, background: 'var(--color-bg-layout)', borderRadius: 4, fontSize: 12 }}>
+                  <div style={{ padding: 8, background: token.colorBgLayout, borderRadius: 4, fontSize: 12 }}>
                     <div>✓ 工具调用数量: {result.details.tool_call_count || 0}</div>
                     <div>✓ 测试工具: {result.details.test_tool || 'N/A'}</div>
                     <div>✓ 响应类型: {result.details.response_type || 'N/A'}</div>
@@ -457,14 +483,14 @@ export default function MCPPluginsPage() {
               {result.tool_calls && result.tool_calls.length > 0 && (
                 <div style={{ marginBottom: 12 }}>
                   <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>🔨 工具调用示例</Text>
-                  <pre style={{ margin: 0, padding: 8, background: 'var(--color-bg-layout)', borderRadius: 4, fontSize: 11, overflow: 'auto', maxHeight: 150 }}>
+                  <pre style={{ margin: 0, padding: 8, background: token.colorBgLayout, borderRadius: 4, fontSize: 11, overflow: 'auto', maxHeight: 150 }}>
                     {JSON.stringify(result.tool_calls[0], null, 2)}
                   </pre>
                 </div>
               )}
 
               {result.suggestions && result.suggestions.length > 0 && (
-                <div style={{ padding: 12, background: 'var(--color-success-bg)', border: '1px solid var(--color-success-border)', borderRadius: 8 }}>
+                <div style={{ padding: 12, background: statusStyles.success.bg, border: `1px solid ${statusStyles.success.border}`, borderRadius: 8 }}>
                   <Text strong style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>💡 建议</Text>
                   <ul style={{ margin: 0, paddingLeft: 20, fontSize: 12 }}>
                     {result.suggestions.map((s: string, i: number) => (
@@ -495,8 +521,8 @@ export default function MCPPluginsPage() {
               {result.error && (
                 <div style={{
                   padding: 16,
-                  background: 'var(--color-warning-bg)',
-                  border: '1px solid var(--color-warning-border)',
+                  background: statusStyles.warning.bg,
+                  border: `1px solid ${statusStyles.warning.border}`,
                   borderRadius: 8,
                   marginBottom: 16
                 }}>
@@ -510,7 +536,7 @@ export default function MCPPluginsPage() {
               {result.response_preview && (
                 <div style={{ marginBottom: 12 }}>
                   <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>📝 模型返回内容（前200字符）</Text>
-                  <pre style={{ margin: 0, padding: 8, background: 'var(--color-bg-layout)', borderRadius: 4, fontSize: 11, overflow: 'auto', maxHeight: 100, whiteSpace: 'pre-wrap' }}>
+                  <pre style={{ margin: 0, padding: 8, background: token.colorBgLayout, borderRadius: 4, fontSize: 11, overflow: 'auto', maxHeight: 100, whiteSpace: 'pre-wrap' }}>
                     {result.response_preview}
                   </pre>
                 </div>
@@ -519,8 +545,8 @@ export default function MCPPluginsPage() {
               {result.suggestions && result.suggestions.length > 0 && (
                 <div style={{
                   padding: 16,
-                  background: 'var(--color-info-bg)',
-                  border: '1px solid var(--color-info-border)',
+                  background: statusStyles.info.bg,
+                  border: `1px solid ${statusStyles.info.border}`,
                   borderRadius: 8
                 }}>
                   <Text strong style={{ fontSize: 14, display: 'block', marginBottom: 8 }}>💡 建议:</Text>
@@ -599,7 +625,7 @@ export default function MCPPluginsPage() {
       {contextHolder}
       <div style={{
         minHeight: '90vh',
-        background: 'linear-gradient(180deg, var(--color-bg-base) 0%, #EEF2F3 100%)',
+        background: `linear-gradient(180deg, ${token.colorBgLayout} 0%, ${alphaColor(token.colorPrimary, 0.08)} 100%)`,
         padding: isMobile ? '20px 16px 70px' : '24px 24px 70px',
         display: 'flex',
         flexDirection: 'column',
@@ -616,9 +642,9 @@ export default function MCPPluginsPage() {
           <Card
             variant="borderless"
             style={{
-              background: 'linear-gradient(135deg, var(--color-primary) 0%, #5A9BA5 50%, var(--color-primary-hover) 100%)',
+              background: `linear-gradient(135deg, ${token.colorPrimary} 0%, ${alphaColor(token.colorPrimary, 0.8)} 50%, ${token.colorPrimaryHover} 100%)`,
               borderRadius: isMobile ? 16 : 24,
-              boxShadow: '0 12px 40px rgba(77, 128, 136, 0.25), 0 4px 12px rgba(0, 0, 0, 0.06)',
+              boxShadow: `0 12px 40px ${alphaColor(token.colorPrimary, 0.25)}, 0 4px 12px ${alphaColor(token.colorText, 0.08)}`,
               marginBottom: isMobile ? 20 : 24,
               border: 'none',
               position: 'relative',
@@ -626,20 +652,20 @@ export default function MCPPluginsPage() {
             }}
           >
             {/* 装饰性背景元素 */}
-            <div style={{ position: 'absolute', top: -60, right: -60, width: 200, height: 200, borderRadius: '50%', background: 'rgba(255, 255, 255, 0.08)', pointerEvents: 'none' }} />
-            <div style={{ position: 'absolute', bottom: -40, left: '30%', width: 120, height: 120, borderRadius: '50%', background: 'rgba(255, 255, 255, 0.05)', pointerEvents: 'none' }} />
-            <div style={{ position: 'absolute', top: '50%', right: '15%', width: 80, height: 80, borderRadius: '50%', background: 'rgba(255, 255, 255, 0.06)', pointerEvents: 'none' }} />
+            <div style={{ position: 'absolute', top: -60, right: -60, width: 200, height: 200, borderRadius: '50%', background: alphaColor(token.colorWhite, 0.08), pointerEvents: 'none' }} />
+            <div style={{ position: 'absolute', bottom: -40, left: '30%', width: 120, height: 120, borderRadius: '50%', background: alphaColor(token.colorWhite, 0.05), pointerEvents: 'none' }} />
+            <div style={{ position: 'absolute', top: '50%', right: '15%', width: 80, height: 80, borderRadius: '50%', background: alphaColor(token.colorWhite, 0.06), pointerEvents: 'none' }} />
 
             <Row align="middle" justify="space-between" gutter={[16, 16]} style={{ position: 'relative', zIndex: 1 }}>
               <Col xs={24} sm={12}>
                 <Space direction="vertical" size={4}>
                   <Space align="center">
-                    <Title level={isMobile ? 3 : 2} style={{ margin: 0, color: '#fff', textShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
-                      <ToolOutlined style={{ color: 'rgba(255,255,255,0.9)', marginRight: 8 }} />
+                    <Title level={isMobile ? 3 : 2} style={{ margin: 0, color: token.colorWhite, textShadow: `0 2px 4px ${alphaColor(token.colorText, 0.2)}` }}>
+                      <ToolOutlined style={{ color: alphaColor(token.colorWhite, 0.9), marginRight: 8 }} />
                       MCP插件管理
                     </Title>
                   </Space>
-                  <Text style={{ fontSize: isMobile ? 12 : 14, color: 'rgba(255,255,255,0.85)', marginLeft: isMobile ? 40 : 48 }}>
+                  <Text style={{ fontSize: isMobile ? 12 : 14, color: alphaColor(token.colorWhite, 0.85), marginLeft: isMobile ? 40 : 48 }}>
                     扩展AI能力，连接外部工具与服务
                   </Text>
                 </Space>
@@ -652,10 +678,10 @@ export default function MCPPluginsPage() {
                     onClick={handleCreate}
                     style={{
                       borderRadius: 12,
-                      background: 'rgba(255, 193, 7, 0.95)',
-                      border: '1px solid rgba(255, 255, 255, 0.3)',
-                      boxShadow: '0 4px 16px rgba(255, 193, 7, 0.4)',
-                      color: '#fff',
+                      background: alphaColor(token.colorWarning, 0.95),
+                      border: `1px solid ${alphaColor(token.colorWhite, 0.3)}`,
+                      boxShadow: `0 4px 16px ${alphaColor(token.colorWarning, 0.4)}`,
+                      color: token.colorWhite,
                       fontWeight: 600
                     }}
                   >
@@ -671,10 +697,10 @@ export default function MCPPluginsPage() {
                 style={{
                   flex: 1,
                   borderRadius: 12,
-                  background: 'rgba(255, 255, 255, 0.9)',
-                  border: '1px solid rgba(255, 255, 255, 0.6)',
+                  background: alphaColor(token.colorBgContainer, 0.9),
+                  border: `1px solid ${alphaColor(token.colorBorder, 0.6)}`,
                   backdropFilter: 'blur(10px)',
-                  boxShadow: '0 4px 12px rgba(0, 0, 0, 0.03)'
+                  boxShadow: `0 4px 12px ${alphaColor(token.colorText, 0.06)}`
                 }}
                 styles={{ body: { padding: isMobile ? 14 : 20 } }}
               >
@@ -690,21 +716,21 @@ export default function MCPPluginsPage() {
                       width: isMobile ? 36 : 40,
                       height: isMobile ? 36 : 40,
                       borderRadius: '50%',
-                      background: modelSupportStatus === 'supported' ? 'var(--color-success-bg)' : modelSupportStatus === 'unsupported' ? 'var(--color-error-bg)' : 'var(--color-info-bg)',
+                      background: modelSupportStatus === 'supported' ? statusStyles.success.bg : modelSupportStatus === 'unsupported' ? statusStyles.error.bg : statusStyles.info.bg,
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      border: `1px solid ${modelSupportStatus === 'supported' ? 'var(--color-success-border)' : modelSupportStatus === 'unsupported' ? 'var(--color-error-border)' : 'var(--color-info-border)'}`,
+                      border: `1px solid ${modelSupportStatus === 'supported' ? statusStyles.success.border : modelSupportStatus === 'unsupported' ? statusStyles.error.border : statusStyles.info.border}`,
                       flexShrink: 0
                     }}>
                       {modelSupportStatus === 'supported' ? (
-                        <CheckCircleOutlined style={{ fontSize: isMobile ? 18 : 20, color: 'var(--color-success)' }} />
+                        <CheckCircleOutlined style={{ fontSize: isMobile ? 18 : 20, color: statusStyles.success.text }} />
                       ) : modelSupportStatus === 'unsupported' ? (
-                        <CloseCircleOutlined style={{ fontSize: isMobile ? 18 : 20, color: 'var(--color-error)' }} />
+                        <CloseCircleOutlined style={{ fontSize: isMobile ? 18 : 20, color: statusStyles.error.text }} />
                       ) : (
-                        <QuestionCircleOutlined style={{ fontSize: isMobile ? 18 : 20, color: 'var(--color-info)' }} />
+                        <QuestionCircleOutlined style={{ fontSize: isMobile ? 18 : 20, color: statusStyles.info.text }} />
                       )}
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <Text strong style={{ fontSize: isMobile ? 14 : 16, display: 'block', color: 'var(--color-text-primary)' }}>模型能力检查</Text>
+                      <Text strong style={{ fontSize: isMobile ? 14 : 16, display: 'block', color: token.colorText }}>模型能力检查</Text>
                       <Text type="secondary" style={{ fontSize: isMobile ? 12 : 13, display: 'block', lineHeight: 1.5 }}>
                         {modelSupportStatus === 'supported'
                           ? '当前模型支持 Function Calling，可正常使用 MCP 插件'
@@ -732,18 +758,18 @@ export default function MCPPluginsPage() {
                 style={{
                   flex: 1,
                   borderRadius: 12,
-                  background: 'rgba(230, 247, 255, 0.6)',
-                  border: '1px solid rgba(145, 213, 255, 0.6)',
+                  background: alphaColor(token.colorInfoBg, 0.7),
+                  border: `1px solid ${alphaColor(token.colorInfoBorder, 0.8)}`,
                   backdropFilter: 'blur(10px)',
-                  boxShadow: '0 4px 12px rgba(0, 0, 0, 0.03)'
+                  boxShadow: `0 4px 12px ${alphaColor(token.colorText, 0.06)}`
                 }}
                 styles={{ body: { padding: isMobile ? 14 : 20 } }}
               >
                 <Space align="start">
-                  <InfoCircleOutlined style={{ fontSize: isMobile ? 18 : 20, color: 'var(--color-primary)', marginTop: 2, flexShrink: 0 }} />
+                  <InfoCircleOutlined style={{ fontSize: isMobile ? 18 : 20, color: token.colorPrimary, marginTop: 2, flexShrink: 0 }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <Text strong style={{ fontSize: isMobile ? 14 : 16, display: 'block', color: 'var(--color-text-primary)', marginBottom: 4 }}>什么是 MCP 插件？</Text>
-                    <Text style={{ fontSize: isMobile ? 12 : 13, display: 'block', color: 'var(--color-text-secondary)', lineHeight: 1.6 }}>
+                    <Text strong style={{ fontSize: isMobile ? 14 : 16, display: 'block', color: token.colorText, marginBottom: 4 }}>什么是 MCP 插件？</Text>
+                    <Text style={{ fontSize: isMobile ? 12 : 13, display: 'block', color: token.colorTextSecondary, lineHeight: 1.6 }}>
                       MCP (Model Context Protocol) 协议允许 AI 调用外部工具获取数据。通过添加插件，AI 可以访问搜索引擎、数据库、API 等服务，大幅增强创作能力。
                     </Text>
                   </div>
@@ -794,7 +820,7 @@ export default function MCPPluginsPage() {
                       size="small"
                       style={{
                         borderRadius: 8,
-                        border: '1px solid #f0f0f0',
+                        border: `1px solid ${token.colorBorderSecondary}`,
                       }}
                       styles={{ body: { padding: isMobile ? 12 : 16 } }}
                     >
@@ -932,7 +958,7 @@ export default function MCPPluginsPage() {
                           alignItems: 'center',
                           gap: isMobile ? 8 : 8,
                           flexWrap: 'wrap',
-                          borderTop: isMobile ? '1px solid #f0f0f0' : 'none',
+                          borderTop: isMobile ? `1px solid ${token.colorBorderSecondary}` : 'none',
                           paddingTop: isMobile ? 12 : 0
                         }}>
                           {/* 桌面端显示开关 */}
@@ -1055,7 +1081,7 @@ export default function MCPPluginsPage() {
         <Modal
           title={
             <Space>
-              <ToolOutlined style={{ color: 'var(--color-primary)' }} />
+              <ToolOutlined style={{ color: token.colorPrimary }} />
               <span>可用工具列表</span>
               {viewingTools && viewingTools.tools.length > 0 && (
                 <Tag color="blue">{viewingTools.tools.length} 个工具</Tag>
@@ -1094,12 +1120,12 @@ export default function MCPPluginsPage() {
                     size="small"
                     style={{
                       borderRadius: 8,
-                      border: '1px solid var(--color-border-secondary)',
-                      boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
+                      border: `1px solid ${token.colorBorderSecondary}`,
+                      boxShadow: `0 2px 4px ${alphaColor(token.colorText, 0.08)}`
                     }}
                     title={
                       <Space>
-                        <Text code strong style={{ fontSize: isMobile ? '13px' : '14px', color: 'var(--color-primary)' }}>
+                        <Text code strong style={{ fontSize: isMobile ? '13px' : '14px', color: token.colorPrimary }}>
                           {tool.name}
                         </Text>
                         <Tag color="processing" style={{ fontSize: '11px' }}>
@@ -1119,9 +1145,9 @@ export default function MCPPluginsPage() {
                               margin: 0,
                               fontSize: isMobile ? '12px' : '13px',
                               padding: '8px 12px',
-                              background: 'var(--color-bg-layout)',
+                              background: token.colorBgLayout,
                               borderRadius: 4,
-                              borderLeft: '3px solid var(--color-info)'
+                              borderLeft: `3px solid ${token.colorInfo}`
                             }}
                           >
                             {tool.description}
@@ -1137,12 +1163,12 @@ export default function MCPPluginsPage() {
                             style={{
                               margin: 0,
                               padding: isMobile ? '8px' : '12px',
-                              background: 'var(--color-bg-layout)',
+                              background: token.colorBgLayout,
                               borderRadius: 4,
                               fontSize: isMobile ? '11px' : '12px',
                               overflow: 'auto',
                               maxHeight: '200px',
-                              border: '1px solid var(--color-border-secondary)',
+                              border: `1px solid ${token.colorBorderSecondary}`,
                               lineHeight: 1.6
                             }}
                           >

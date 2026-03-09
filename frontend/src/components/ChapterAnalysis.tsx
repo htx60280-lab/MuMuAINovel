@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Modal, Spin, Alert, Tabs, Card, Tag, List, Empty, Statistic, Row, Col, Button } from 'antd';
+import { Modal, Spin, Alert, Tabs, Card, Tag, List, Empty, Statistic, Row, Col, Button, theme } from 'antd';
 import {
   ThunderboltOutlined,
   BulbOutlined,
@@ -27,6 +27,7 @@ interface ChapterAnalysisProps {
 }
 
 export default function ChapterAnalysis({ chapterId, visible, onClose }: ChapterAnalysisProps) {
+  const { token } = theme.useToken();
   const [task, setTask] = useState<AnalysisTask | null>(null);
   const [analysis, setAnalysis] = useState<ChapterAnalysisResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -285,7 +286,7 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
               transition: 'all 0.3s ease',
               borderRadius: 6,
               boxShadow: task.progress > 0 && task.status !== 'failed'
-                ? '0 0 10px rgba(24, 144, 255, 0.3)'
+                ? `0 0 10px color-mix(in srgb, ${token.colorPrimary} 30%, transparent)`
                 : 'none'
             }} />
           </div>

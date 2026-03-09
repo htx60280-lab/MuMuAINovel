@@ -1,5 +1,5 @@
 import React from 'react';
-import { Button, Tooltip } from 'antd';
+import { Button, Tooltip, theme } from 'antd';
 import { EditOutlined } from '@ant-design/icons';
 
 interface PartialRegenerateToolbarProps {
@@ -19,6 +19,8 @@ export const PartialRegenerateToolbar: React.FC<PartialRegenerateToolbarProps> =
   onRegenerate,
   selectedText
 }) => {
+  const { token } = theme.useToken();
+
   if (!visible || !selectedText) return null;
 
   // 限制显示的选中文本长度
@@ -33,15 +35,15 @@ export const PartialRegenerateToolbar: React.FC<PartialRegenerateToolbarProps> =
         top: position.top,
         left: position.left,
         zIndex: 10000,
-        background: '#fff',
+        background: token.colorBgElevated,
         borderRadius: 8,
-        boxShadow: '0 4px 16px rgba(0, 0, 0, 0.15)',
+        boxShadow: token.boxShadow,
         padding: '6px 8px',
         display: 'flex',
         alignItems: 'center',
         gap: 8,
         animation: 'fadeIn 0.2s ease-out',
-        border: '1px solid #e8e8e8',
+        border: `1px solid ${token.colorBorderSecondary}`,
       }}
     >
       <Tooltip
@@ -61,7 +63,7 @@ export const PartialRegenerateToolbar: React.FC<PartialRegenerateToolbarProps> =
             background: 'linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-hover) 100%)',
             border: 'none',
             fontWeight: 500,
-            boxShadow: '0 4px 12px rgba(77, 128, 136, 0.3)',
+            boxShadow: token.boxShadowSecondary,
           }}
         >
           AI重写
@@ -69,7 +71,7 @@ export const PartialRegenerateToolbar: React.FC<PartialRegenerateToolbarProps> =
       </Tooltip>
       <span style={{ 
         fontSize: 12, 
-        color: '#8c8c8c',
+        color: token.colorTextTertiary,
         maxWidth: 150,
         overflow: 'hidden',
         textOverflow: 'ellipsis',

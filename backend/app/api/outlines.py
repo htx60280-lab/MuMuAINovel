@@ -32,6 +32,7 @@ from app.services.prompt_service import prompt_service, PromptService
 from app.services.memory_service import memory_service
 from app.services.plot_expansion_service import PlotExpansionService
 from app.services.foreshadow_service import foreshadow_service
+from app.services.context_manager import ContextAgent
 from app.services.memory_service import memory_service
 from app.logger import get_logger
 from app.api.settings import get_user_ai_service, get_task_ai_service
@@ -769,6 +770,62 @@ async def _build_outline_continue_context(
     
     return context
 
+async def _build_outline_long_range_context(
+    project_id: str,
+    latest_outlines: List[Outline],
+    db: AsyncSession,
+    user_id: str,
+    top_k: int = 8
+) -> str:
+    """为大纲续写构建超长程连贯上下文文本。"""
+    try:
+        if not latest_outlines:
+            return ""
+
+        recent_outline_texts = []
+        recent_characters = []
+        for outline in latest_outlines[-3:]:
+            if outline.content:
+                recent_outline_texts.append(outline.content)
+            if outline.structure:
+                try:
+                    structure = json.loads(outline.structure)
+                    for item in structure.get("characters", []):
+                        if isinstance(item, dict):
+                            name = item.get("name")
+                            if name:
+                                recent_characters.append(name)
+                        elif isinstance(item, str) and item:
+                            recent_characters.append(item)
+                except json.JSONDecodeError:
+                    continue
+
+        query_text = "\n".join(text for text in recent_outline_texts if text).strip()
+        if not query_text:
+            query_text = "\n".join(
+                f"第{outline.order_index}章 {outline.title or ''} {outline.content or ''}"
+                for outline in latest_outlines[-3:]
+            ).strip()
+
+        if not query_text:
+            return ""
+
+        context_agent = ContextAgent(db=db, use_pgvector=True)
+        context_result = await context_agent.build_generation_context(
+            project_id=project_id,
+            chapter_number=(latest_outlines[-1].order_index or 0) + 1,
+            chapter_outline=query_text[:1500],
+            user_id=user_id,
+            character_names=list(dict.fromkeys(recent_characters))[:12],
+            top_k=top_k,
+        )
+
+        return (context_result.context_string or "").strip()
+    except Exception as e:
+        logger.warning(f"⚠️ 构建大纲超长程上下文失败，已降级跳过: {e}")
+        return ""
+
+
 
 async def _check_and_create_missing_characters_from_outlines(
     outline_data: list,
@@ -1484,6 +1541,15 @@ async def continue_outline_generator(
                 requirements=data.get("requirements", ""),
                 db=db
             )
+
+            long_range_context = ""
+            if data.get("enable_long_range_context", True):
+                long_range_context = await _build_outline_long_range_context(
+                    project_id=project_id,
+                    latest_outlines=latest_outlines,
+                    db=db,
+                    user_id=user_id,
+                )
             
             # 日志统计
             stats = context['stats']
@@ -1527,7 +1593,7 @@ async def continue_outline_generator(
                 plot_stage_instruction=stage_instruction,
                 story_direction=data.get("story_direction", "自然延续"),
                 requirements=data.get("requirements", ""),
-                mcp_references=""
+                mcp_references=long_range_context
             )
             logger.debug(f" 续写提示词: {prompt}")
             # 调用AI生成当前批次

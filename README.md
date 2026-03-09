@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-1.3.7-blue.svg)
+![Version](https://img.shields.io/badge/version-1.3.8-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.11-blue.svg)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.109.0-green.svg)
 ![React](https://img.shields.io/badge/react-18.3.1-blue.svg)
@@ -54,12 +54,21 @@
 ### 登录界面
 ![登录界面](images/1.png)
 
+![登录界面](images/1-1.png)
+
 ### 主界面
 ![主界面](images/2.png)
 
+![主界面（暗色）](images/2-1.png)
+
 ### 项目管理
 ![项目管理](images/3.png)
+![项目管理](images/3-1.png)
 
+### 赞助我 💖
+![赞助我](images/4.png)
+
+![赞助我](images/4-1.png)
 </div>
 
 </details>
@@ -80,6 +89,7 @@
 - [x] **角色/组织卡片导入导出** - 单独导出角色和组织卡片，支持跨项目数据共享
 - [x] **伏笔管理** - 智能追踪剧情伏笔，提醒未回收线索，可视化伏笔时间线
 - [x] **提示词工坊** - 社区驱动的 Prompt 模板分享平台，一键导入优质提示词
+- [x] **拆书功能** - 目前呼声比较高的功能，一键拆书，给当年的ta一个圆满的结局
 - [x] **反幻觉/反遗忘系统** - 导演预规划、精确实体检索、规则护栏三重机制，减少角色混淆和设定遗忘
 - [x] **任务渠道系统** - 为不同任务类型（大纲/写作/润色/审查）指定不同 AI 预设
 - [x] **CriticAgent 评分** - 自动三维度质量评审（角色一致性/设定一致性/三线节奏），集成到分析流程
@@ -90,7 +100,7 @@
 
 ### 📝 规划中功能
 
-- [ ] **拆书功能** - 目前呼声比较高的功能，一键拆书，给当年的ta一个圆满的结局
+......
 
 > 💡 欢迎提交 Issue 或 Pull Request！
 

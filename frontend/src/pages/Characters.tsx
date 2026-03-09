@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
-import { Button, Modal, Form, Input, Select, message, Row, Col, Empty, Tabs, Divider, Typography, Space, InputNumber, Checkbox } from 'antd';
+import { Button, Modal, Form, Input, Select, message, Row, Col, Empty, Tabs, Divider, Typography, Space, InputNumber, Checkbox, theme } from 'antd';
 import { ThunderboltOutlined, UserOutlined, TeamOutlined, PlusOutlined, ExportOutlined, ImportOutlined, DownloadOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { useCharacterSync } from '../store/hooks';
-import { characterGridConfig } from '../components/CardStyles';
+import { charactersPageGridConfig } from '../components/CardStyles';
 import { CharacterCard } from '../components/CharacterCard';
 import { SSELoadingOverlay } from '../components/SSELoadingOverlay';
 import type { Character, ApiError } from '../types';
@@ -94,6 +94,7 @@ interface CharacterUpdateData {
 }
 
 export default function Characters() {
+  const { token } = theme.useToken();
   const { currentProject, characters } = useStore();
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -390,7 +391,7 @@ export default function Characters() {
           content: (
             <div>
               {validation.errors.map((error, index) => (
-                <div key={index} style={{ color: 'red' }}>• {error}</div>
+                <div key={index} style={{ color: token.colorError }}>• {error}</div>
               ))}
             </div>
           ),
@@ -415,10 +416,10 @@ export default function Characters() {
             {validation.warnings.length > 0 && (
               <>
                 <Divider style={{ margin: '12px 0' }} />
-                <p style={{ color: '#faad14' }}><strong>⚠️ 警告:</strong></p>
+                <p style={{ color: token.colorWarning }}><strong>⚠️ 警告:</strong></p>
                 <ul style={{ marginLeft: 20 }}>
                   {validation.warnings.map((warning, index) => (
-                    <li key={index} style={{ color: '#faad14' }}>{warning}</li>
+                    <li key={index} style={{ color: token.colorWarning }}>{warning}</li>
                   ))}
                 </ul>
               </>
@@ -463,10 +464,10 @@ export default function Characters() {
                     {result.statistics.skipped > 0 && (
                       <>
                         <Divider style={{ margin: '12px 0' }} />
-                        <p style={{ color: '#faad14' }}>⚠️ 跳过: {result.statistics.skipped} 个</p>
+                        <p style={{ color: token.colorWarning }}>⚠️ 跳过: {result.statistics.skipped} 个</p>
                         <ul style={{ marginLeft: 20 }}>
                           {result.details.skipped.map((name, index) => (
-                            <li key={index} style={{ color: '#faad14' }}>{name}</li>
+                            <li key={index} style={{ color: token.colorWarning }}>{name}</li>
                           ))}
                         </ul>
                       </>
@@ -474,10 +475,10 @@ export default function Characters() {
                     {result.warnings.length > 0 && (
                       <>
                         <Divider style={{ margin: '12px 0' }} />
-                        <p style={{ color: '#faad14' }}>⚠️ 警告:</p>
+                        <p style={{ color: token.colorWarning }}>⚠️ 警告:</p>
                         <ul style={{ marginLeft: 20 }}>
                           {result.warnings.map((warning, index) => (
-                            <li key={index} style={{ color: '#faad14' }}>{warning}</li>
+                            <li key={index} style={{ color: token.colorWarning }}>{warning}</li>
                           ))}
                         </ul>
                       </>
@@ -485,10 +486,10 @@ export default function Characters() {
                     {result.details.errors.length > 0 && (
                       <>
                         <Divider style={{ margin: '12px 0' }} />
-                        <p style={{ color: 'red' }}>❌ 失败: {result.statistics.errors} 个</p>
+                        <p style={{ color: token.colorError }}>❌ 失败: {result.statistics.errors} 个</p>
                         <ul style={{ marginLeft: 20 }}>
                           {result.details.errors.map((error, index) => (
-                            <li key={index} style={{ color: 'red' }}>{error}</li>
+                            <li key={index} style={{ color: token.colorError }}>{error}</li>
                           ))}
                         </ul>
                       </>
@@ -777,7 +778,7 @@ export default function Characters() {
           <Empty description="还没有角色或组织，开始创建吧！" />
         ) : (
           <>
-            <Row gutter={isMobile ? [8, 8] : characterGridConfig.gutter}>
+            <Row gutter={isMobile ? [8, 8] : charactersPageGridConfig.gutter}>
               {activeTab === 'all' && (
                 <>
                   {characterList.length > 0 && (
@@ -793,10 +794,10 @@ export default function Characters() {
                       {characterList.map((character) => (
                         <Col
                           xs={24}
-                          sm={characterGridConfig.sm}
-                          md={characterGridConfig.md}
-                          lg={characterGridConfig.lg}
-                          xl={characterGridConfig.xl}
+                          sm={charactersPageGridConfig.sm}
+                          md={charactersPageGridConfig.md}
+                          lg={charactersPageGridConfig.lg}
+                          xl={charactersPageGridConfig.xl}
                           key={character.id}
                           style={{ padding: isMobile ? '4px' : '8px' }}
                         >
@@ -831,10 +832,10 @@ export default function Characters() {
                       {organizationList.map((org) => (
                         <Col
                           xs={24}
-                          sm={characterGridConfig.sm}
-                          md={characterGridConfig.md}
-                          lg={characterGridConfig.lg}
-                          xl={characterGridConfig.xl}
+                          sm={charactersPageGridConfig.sm}
+                          md={charactersPageGridConfig.md}
+                          lg={charactersPageGridConfig.lg}
+                          xl={charactersPageGridConfig.xl}
                           key={org.id}
                           style={{ padding: isMobile ? '4px' : '8px' }}
                         >
@@ -861,10 +862,10 @@ export default function Characters() {
               {activeTab === 'character' && characterList.map((character) => (
                 <Col
                   xs={24}
-                  sm={characterGridConfig.sm}
-                  md={characterGridConfig.md}
-                  lg={characterGridConfig.lg}
-                  xl={characterGridConfig.xl}
+                  sm={charactersPageGridConfig.sm}
+                  md={charactersPageGridConfig.md}
+                  lg={charactersPageGridConfig.lg}
+                  xl={charactersPageGridConfig.xl}
                   key={character.id}
                   style={{ padding: isMobile ? '4px' : '8px' }}
                 >
@@ -887,10 +888,10 @@ export default function Characters() {
               {activeTab === 'organization' && organizationList.map((org) => (
                 <Col
                   xs={24}
-                  sm={characterGridConfig.sm}
-                  md={characterGridConfig.md}
-                  lg={characterGridConfig.lg}
-                  xl={characterGridConfig.xl}
+                  sm={charactersPageGridConfig.sm}
+                  md={charactersPageGridConfig.md}
+                  lg={charactersPageGridConfig.lg}
+                  xl={charactersPageGridConfig.xl}
                   key={org.id}
                   style={{ padding: isMobile ? '4px' : '8px' }}
                 >
@@ -1020,7 +1021,7 @@ export default function Characters() {
                     value={editingCharacter.relationships}
                     readOnly
                     autoSize={{ minRows: 1, maxRows: 3 }}
-                    style={{ backgroundColor: '#f5f5f5', cursor: 'default' }}
+                    style={{ backgroundColor: token.colorFillTertiary, cursor: 'default' }}
                   />
                 </Form.Item>
               )}
@@ -1195,10 +1196,10 @@ export default function Characters() {
                   disabled
                   autoSize={{ minRows: 1, maxRows: 4 }}
                   placeholder="暂无成员，请在组织管理中添加"
-                  style={{ color: '#333', backgroundColor: '#fafafa' }}
+                  style={{ color: token.colorText, backgroundColor: token.colorFillAlter }}
                 />
               </Form.Item>
-              <div style={{ marginBottom: 12, fontSize: 12, color: '#8c8c8c' }}>
+              <div style={{ marginBottom: 12, fontSize: 12, color: token.colorTextTertiary }}>
                 💡 请前往「组织管理」页面添加或管理组织成员
               </div>
 

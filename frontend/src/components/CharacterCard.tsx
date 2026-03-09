@@ -1,6 +1,6 @@
-import { Card, Space, Tag, Typography, Popconfirm } from 'antd';
+import { Card, Space, Tag, Typography, Popconfirm, theme } from 'antd';
 import { EditOutlined, DeleteOutlined, UserOutlined, BankOutlined, ExportOutlined } from '@ant-design/icons';
-import { cardStyles } from './CardStyles';
+import { characterCardStyles } from './CardStyles';
 import type { Character } from '../types';
 
 const { Text, Paragraph } = Typography;
@@ -13,6 +13,8 @@ interface CharacterCardProps {
 }
 
 export const CharacterCard: React.FC<CharacterCardProps> = ({ character, onEdit, onDelete, onExport }) => {
+  const { token } = theme.useToken();
+
   const getRoleTypeColor = (roleType?: string) => {
     const roleColors: Record<string, string> = {
       'protagonist': 'blue',
@@ -37,10 +39,10 @@ export const CharacterCard: React.FC<CharacterCardProps> = ({ character, onEdit,
 
   const getStatusTag = () => {
     const statusConfig: Record<string, { color: string; label: string }> = {
-      deceased: { color: '#000000', label: '💀 已死亡' },
-      missing: { color: '#faad14', label: '❓ 已失踪' },
-      retired: { color: '#8c8c8c', label: '📤 已退场' },
-      destroyed: { color: '#000000', label: '💀 已覆灭' },
+      deceased: { color: token.colorTextBase, label: '💀 已死亡' },
+      missing: { color: token.colorWarning, label: '❓ 已失踪' },
+      retired: { color: token.colorTextTertiary, label: '📤 已退场' },
+      destroyed: { color: token.colorTextBase, label: '💀 已覆灭' },
     };
     const config = statusConfig[charStatus];
     if (!config) return null;
@@ -51,7 +53,7 @@ export const CharacterCard: React.FC<CharacterCardProps> = ({ character, onEdit,
     <Card
       hoverable
       style={{
-        ...(isOrganization ? cardStyles.organization : cardStyles.character),
+        ...(isOrganization ? characterCardStyles.organizationCard : characterCardStyles.characterCard),
         ...(isInactive ? { opacity: 0.6, filter: 'grayscale(40%)' } : {}),
       }}
       styles={{
@@ -82,14 +84,14 @@ export const CharacterCard: React.FC<CharacterCardProps> = ({ character, onEdit,
       <Card.Meta
         avatar={
           isOrganization ? (
-            <BankOutlined style={{ fontSize: 32, color: '#52c41a' }} />
+            <BankOutlined style={{ fontSize: 32, color: token.colorSuccess }} />
           ) : (
-            <UserOutlined style={{ fontSize: 32, color: '#1890ff' }} />
+            <UserOutlined style={{ fontSize: 32, color: token.colorPrimary }} />
           )
         }
         title={
           <Space>
-            <span style={cardStyles.ellipsis}>{character.name}</span>
+            <span style={characterCardStyles.nameEllipsis}>{character.name}</span>
             {isOrganization ? (
               <Tag color="green">组织</Tag>
             ) : (
@@ -103,7 +105,7 @@ export const CharacterCard: React.FC<CharacterCardProps> = ({ character, onEdit,
           </Space>
         }
         description={
-          <div style={cardStyles.description}>
+          <div style={characterCardStyles.descriptionBlock}>
             {/* 角色特有字段 */}
             {!isOrganization && (
               <>
