@@ -10,6 +10,12 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
+from app.services.benchmark.constory_checker import (
+    ConStoryChecker,
+    JudgeLLMClient,
+    create_logger,
+    load_prompt_templates,
+)
 from app.logger import get_logger
 from app.services.ai_service import AIService
 
@@ -24,8 +30,7 @@ class ConStoryAdapter:
     若本地源码不存在或执行失败，则回退到当前 PoC 提示词评测方案。
     """
 
-    CONSTORY_ROOT = Path(__file__).resolve().parent
-    CONSTORY_PROMPTS_DIR = CONSTORY_ROOT / "constory_prompts"
+    CONSTORY_PROMPTS_DIR = Path(__file__).resolve().parent / "constory_prompts"
 
     CATEGORY_HINTS = {
         "事实矛盾": ["身份", "名字", "年龄", "关系", "地点", "事实"],
@@ -76,8 +81,8 @@ class ConStoryAdapter:
         provider: Optional[str] = None,
         model: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        if not self.CONSTORY_ROOT.exists():
-            logger.info("ℹ️ 未检测到本地 ConStory-Bench 资源，回退 PoC 评测器")
+        if not self.CONSTORY_PROMPTS_DIR.exists():
+            logger.info("ℹ️ 未检测到本地 ConStory prompts，回退 PoC 评测器")
             return None
 
         judge_model = model or getattr(self.ai_service, 'default_model', None)
@@ -105,26 +110,9 @@ class ConStoryAdapter:
         api_base: str,
         api_key: str,
     ) -> Dict[str, Any]:
-        import importlib.util
-        import sys
-
-        judge_path = Path(__file__).resolve().parents[4] / ".tmp_constory_bench" / "constory" / "judge.py"
-        prompts_dir = self.CONSTORY_PROMPTS_DIR
-        if not judge_path.exists():
-            raise FileNotFoundError(f"judge.py 不存在: {judge_path}")
-
-        spec = importlib.util.spec_from_file_location("novelforge_constory_judge", judge_path)
-        if spec is None or spec.loader is None:
-            raise RuntimeError("无法加载 ConStory judge 模块")
-
-        judge_module = importlib.util.module_from_spec(spec)
-        sys.modules["novelforge_constory_judge"] = judge_module
-        spec.loader.exec_module(judge_module)
-
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         with tempfile.TemporaryDirectory(prefix="novelforge_constory_") as temp_dir:
             input_path = Path(temp_dir) / "story.parquet"
-            output_path = Path(temp_dir) / f"judge_novelforge_0_end_{ts}.csv"
             pd.DataFrame([
                 {
                     "id": 1,
@@ -132,37 +120,24 @@ class ConStoryAdapter:
                 }
             ]).to_parquet(input_path, index=False)
 
-            logger_obj = judge_module.setup_logger(
-                "novelforge_constory_judge",
-                str(Path(temp_dir) / "judge.log"),
-                "INFO",
-            )
-            templates = judge_module.load_prompt_templates(str(prompts_dir))
-            client = judge_module.JudgeLLMClient(
+            logger_obj = create_logger("novelforge_constory_judge")
+            templates = load_prompt_templates(str(self.CONSTORY_PROMPTS_DIR))
+            client = JudgeLLMClient(
                 api_base=api_base,
                 api_key=api_key,
                 model=judge_model,
                 max_concurrent=1,
                 logger=logger_obj,
             )
-            checker = judge_module.ConStoryChecker(
+            checker = ConStoryChecker(
                 client=client,
                 prompt_templates=templates,
                 story_column="generated_story",
                 logger=logger_obj,
             )
 
-            await checker.run(
-                input_path=str(input_path),
-                output_path=str(output_path),
-                model_name="novelforge",
-                start_idx=0,
-                end_idx=None,
-                resume=False,
-            )
-
-            result_df = pd.read_csv(output_path)
-            if result_df.empty:
+            row = await checker.run_single_story(story_text)
+            if not row:
                 return {
                     "overall_score": 100,
                     "summary": "真实 ConStory checker 未返回问题结果。",
@@ -170,7 +145,6 @@ class ConStoryAdapter:
                     "issues": [],
                 }
 
-            row = result_df.iloc[0].to_dict()
             return self._convert_checker_row_to_result(row)
 
     def _convert_checker_row_to_result(self, row: Dict[str, Any]) -> Dict[str, Any]:
