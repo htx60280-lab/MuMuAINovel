@@ -60,6 +60,10 @@ import type {
   BatchAnalysisStatusResponse,
   BatchAnalyzeUnanalyzedRequest,
   BatchAnalyzeUnanalyzedResponse,
+  ConsistencyEvaluationCreateRequest,
+  ConsistencyEvaluationDetail,
+  ConsistencyEvaluationListResponse,
+  ConsistencyIssueListResponse,
 } from '../types';
 
 interface MCPPluginSimpleCreate {
@@ -397,6 +401,20 @@ export const projectApi = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
+};
+
+export const consistencyEvaluationApi = {
+  createEvaluation: (projectId: string, payload: ConsistencyEvaluationCreateRequest = {}) =>
+    api.post<unknown, ConsistencyEvaluationDetail>(`/consistency-evaluations/projects/${projectId}`, payload),
+
+  listProjectEvaluations: (projectId: string, limit = 10) =>
+    api.get<unknown, ConsistencyEvaluationListResponse>(`/consistency-evaluations/projects/${projectId}`, { params: { limit } }),
+
+  getEvaluationDetail: (evaluationId: string) =>
+    api.get<unknown, ConsistencyEvaluationDetail>(`/consistency-evaluations/${evaluationId}`),
+
+  listEvaluationIssues: (evaluationId: string) =>
+    api.get<unknown, ConsistencyIssueListResponse>(`/consistency-evaluations/${evaluationId}/issues`),
 };
 
 export const bookImportApi = {

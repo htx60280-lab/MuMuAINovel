@@ -174,6 +174,69 @@ export interface ProjectUpdate {
   // current_words 由章节内容自动计算，不在此接口中
 }
 
+export interface ConsistencyIssue {
+  id: string;
+  category: string;
+  subcategory?: string | null;
+  severity: string;
+  title: string;
+  description?: string | null;
+  exact_quote?: string | null;
+  location_text?: string | null;
+  chapter_number?: number | null;
+  evidence_json?: Record<string, unknown> | null;
+  created_at?: string | null;
+}
+
+export interface ConsistencyEvaluation {
+  id: string;
+  project_id: string;
+  snapshot_id: string;
+  trigger_type: string;
+  trigger_chapter_number?: number | null;
+  status: 'pending' | 'running' | 'succeeded' | 'failed';
+  provider?: string | null;
+  model?: string | null;
+  benchmark_name: string;
+  benchmark_version: string;
+  overall_score?: number | null;
+  issue_count: number;
+  summary_json?: {
+    category_counts?: Record<string, number>;
+    score_breakdown?: Record<string, number>;
+    summary_text?: string;
+  } | null;
+  error_message?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  created_at?: string | null;
+}
+
+export interface ConsistencyEvaluationDetail extends ConsistencyEvaluation {
+  issues: ConsistencyIssue[];
+}
+
+export interface ConsistencyEvaluationListResponse {
+  total: number;
+  items: ConsistencyEvaluation[];
+}
+
+export interface ConsistencyIssueListResponse {
+  total: number;
+  items: ConsistencyIssue[];
+}
+
+export interface ConsistencyEvaluationCreateRequest {
+  scope?: 'latest_10' | 'project' | 'chapter_range';
+  start_chapter?: number;
+  end_chapter?: number;
+  snapshot_mode?: 'latest' | 'published';
+  provider?: string;
+  model?: string;
+  trigger_type?: 'manual' | 'auto';
+  trigger_chapter_number?: number;
+}
+
 // 向导专用的项目更新接口，包含向导流程控制字段
 export interface ProjectWizardUpdate extends ProjectUpdate {
   wizard_status?: 'incomplete' | 'completed';

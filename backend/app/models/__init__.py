@@ -20,6 +20,7 @@ from app.models.foreshadow import Foreshadow
 from app.models.prompt_workshop import PromptWorkshopItem, PromptSubmission, PromptWorkshopLike
 from app.models.chapter_memory import ChapterMemory
 from app.models.key_event import KeyEvent
+from app.models.consistency_evaluation import StorySnapshot, ConsistencyEvaluation, ConsistencyIssue
 
 __all__ = [
     "Project",
@@ -50,5 +51,8 @@ __all__ = [
     "PromptSubmission",
     "PromptWorkshopLike",
     "ChapterMemory",
-    "KeyEvent"
+    "KeyEvent",
+    "StorySnapshot",
+    "ConsistencyEvaluation",
+    "ConsistencyIssue",
 ]

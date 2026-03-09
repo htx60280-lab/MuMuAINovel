@@ -23,6 +23,7 @@ import { useStore } from '../store';
 import { useCharacterSync, useOutlineSync, useChapterSync } from '../store/hooks';
 import { projectApi } from '../services/api';
 import ThemeSwitch from '../components/ThemeSwitch';
+import ConsistencyEvaluationPanel from '../components/ConsistencyEvaluationPanel';
 import { useThemeMode } from '../theme/useThemeMode';
 import { getStoredSidebarCollapsed, setStoredSidebarCollapsed } from '../utils/sidebarState';
 
@@ -635,10 +636,12 @@ export default function ProjectDetail() {
               borderRadius: mobile ? '8px' : '12px',
               boxShadow: `0 8px 24px ${alphaColor(token.colorText, 0.08)}`,
               height: '100%',
-              overflow: 'hidden',
+              overflowY: 'auto',
+              overflowX: 'hidden',
               display: 'flex',
               flexDirection: 'column'
             }}>
+              <ConsistencyEvaluationPanel projectId={projectId!} chapterCount={chapters.length} />
               <Outlet />
             </div>
           </Content>

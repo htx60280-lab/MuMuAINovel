@@ -131,7 +131,7 @@ from app.api import (
     auth, users, settings, writing_styles, memories,
     mcp_plugins, admin, inspiration, prompt_templates,
     changelog, careers, foreshadows, prompt_workshop, book_import,
-    review, key_events
+    review, key_events, consistency_evaluations
 )
 
 app.include_router(auth.router, prefix="/api")
@@ -158,6 +158,7 @@ app.include_router(prompt_workshop.router, prefix="/api")  # 提示词工坊API
 app.include_router(book_import.router, prefix="/api")  # 拆书导入API
 app.include_router(review.router, prefix="/api")  # 章节审查API（五维审查）
 app.include_router(key_events.router, prefix="/api")  # 关键事件API
+app.include_router(consistency_evaluations.router, prefix="/api")  # 整书一致性评测API
 
 static_dir = Path(__file__).parent.parent / "static"
 if static_dir.exists():

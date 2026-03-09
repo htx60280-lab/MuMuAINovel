@@ -60,6 +60,7 @@ from app.services.world_state_utils import normalize_world_state_structure, norm
 from app.services.critic_agent import CriticAgent
 from app.services.context_manager import ContextAgent
 from app.services.chapter_guardrails import ChapterGuardrails, GuardrailResult
+from app.services.benchmark.consistency_evaluation_service import ConsistencyEvaluationService
 from app.logger import get_logger
 from app.api.settings import get_user_ai_service, get_task_ai_service, _resolve_task_ai_service_standalone
 from app.utils.sse_response import SSEResponse, create_sse_response
@@ -78,6 +79,39 @@ async def get_db_write_lock(user_id: str) -> Lock:
         db_write_locks[user_id] = Lock()
         logger.debug(f"🔒 为用户 {user_id} 创建数据库写入锁")
     return db_write_locks[user_id]
+
+
+async def _maybe_schedule_consistency_evaluation(
+    db: AsyncSession,
+    background_tasks: BackgroundTasks,
+    project_id: str,
+    user_id: str,
+    chapter_number: int,
+) -> None:
+    """每新增 10 章自动触发一次整书一致性评测。"""
+
+    service = ConsistencyEvaluationService(db)
+    should_trigger = await service.should_auto_trigger(project_id=project_id, chapter_number=chapter_number)
+    if not should_trigger:
+        return
+
+    project_result = await db.execute(select(Project).where(Project.id == project_id))
+    project = project_result.scalar_one_or_none()
+    if not project:
+        return
+
+    evaluation = await service.create_evaluation(
+        project=project,
+        user_id=user_id,
+        scope="latest_10",
+        start_chapter=max(1, chapter_number - 9),
+        end_chapter=chapter_number,
+        snapshot_mode="latest",
+        trigger_type="auto",
+        trigger_chapter_number=chapter_number,
+    )
+    background_tasks.add_task(service.run_evaluation, evaluation.id, user_id)
+    logger.info(f"📚 已自动创建整书一致性评测任务: {evaluation.id}, 触发章节={chapter_number}")
 
 
 def _merge_system_prompts(*parts: Optional[str]) -> Optional[str]:
@@ -880,6 +914,15 @@ async def update_chapter(
     
     await db.commit()
     await db.refresh(chapter)
+
+    if "content" in update_data and (chapter.content or "").strip() and chapter.status == "completed":
+        await _maybe_schedule_consistency_evaluation(
+            db=db,
+            background_tasks=background_tasks,
+            project_id=chapter.project_id,
+            user_id=user_id,
+            chapter_number=chapter.chapter_number,
+        )
     
     chapter_dict = {
         "id": chapter.id,
@@ -4102,6 +4145,23 @@ async def generate_single_chapter_for_batch(
     
     logger.info(f"✅ 单章节生成完成: 第{chapter.chapter_number}章，共 {new_word_count} 字")
 
+    service = ConsistencyEvaluationService(db_session)
+    if await service.should_auto_trigger(project_id=chapter.project_id, chapter_number=chapter.chapter_number):
+        project_result = await db_session.execute(select(Project).where(Project.id == chapter.project_id))
+        auto_project = project_result.scalar_one_or_none()
+        if auto_project:
+            auto_eval = await service.create_evaluation(
+                project=auto_project,
+                user_id=user_id,
+                scope="latest_10",
+                start_chapter=max(1, chapter.chapter_number - 9),
+                end_chapter=chapter.chapter_number,
+                snapshot_mode="latest",
+                trigger_type="auto",
+                trigger_chapter_number=chapter.chapter_number,
+            )
+            asyncio.create_task(service.run_evaluation(auto_eval.id, user_id))
+
     # Data Agent：章节切片向量化 + 状态提取 + 摘要钩子同步
     data_agent_result = await _run_data_agent_pipeline(
         db_session=db_session,
@@ -4921,7 +4981,24 @@ async def apply_partial_regenerate(
     
     await db.commit()
     await db.refresh(chapter)
-    
+
+    service = ConsistencyEvaluationService(db)
+    if await service.should_auto_trigger(project_id=chapter.project_id, chapter_number=chapter.chapter_number):
+        project_result = await db.execute(select(Project).where(Project.id == chapter.project_id))
+        auto_project = project_result.scalar_one_or_none()
+        if auto_project:
+            auto_eval = await service.create_evaluation(
+                project=auto_project,
+                user_id=user_id,
+                scope="latest_10",
+                start_chapter=max(1, chapter.chapter_number - 9),
+                end_chapter=chapter.chapter_number,
+                snapshot_mode="latest",
+                trigger_type="auto",
+                trigger_chapter_number=chapter.chapter_number,
+            )
+            asyncio.create_task(service.run_evaluation(auto_eval.id, user_id))
+
     logger.info(f"✅ 局部重写已应用: 章节{chapter_id}, {old_word_count}字 -> {new_word_count}字")
     
     return {
