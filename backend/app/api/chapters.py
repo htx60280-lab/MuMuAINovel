@@ -114,6 +114,29 @@ async def _maybe_schedule_consistency_evaluation(
     logger.info(f"📚 已自动创建整书一致性评测任务: {evaluation.id}, 触发章节={chapter_number}")
 
 
+async def _auto_plant_foreshadows_with_new_session(
+    user_id: str,
+    project_id: str,
+    chapter_id: str,
+    chapter_number: int,
+    chapter_content: str,
+) -> Dict[str, Any]:
+    """使用独立数据库会话自动标记伏笔埋入，避免流式会话中的 ORM 上下文问题。"""
+    from app.database import get_engine
+    from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession as BgAsyncSession
+
+    engine = await get_engine(user_id)
+    session_factory = async_sessionmaker(engine, class_=BgAsyncSession, expire_on_commit=False)
+    async with session_factory() as bg_db:
+        return await foreshadow_service.auto_plant_pending_foreshadows(
+            db=bg_db,
+            project_id=project_id,
+            chapter_id=chapter_id,
+            chapter_number=chapter_number,
+            chapter_content=chapter_content,
+        )
+
+
 def _merge_system_prompts(*parts: Optional[str]) -> Optional[str]:
     """合并多个 system_prompt 片段，自动忽略空值。"""
     merged = [part.strip() for part in parts if part and part.strip()]
@@ -2533,6 +2556,9 @@ async def generate_chapter_content_stream(
                     model="default"
                 )
                 db_session.add(history)
+                saved_project_id = project.id
+                saved_chapter_id = current_chapter.id
+                saved_chapter_number = current_chapter.chapter_number
                 
                 await db_session.commit()
                 db_committed = True
@@ -2554,11 +2580,11 @@ async def generate_chapter_content_stream(
                 
                 # 🔮 章节生成后自动标记计划在本章埋入的伏笔
                 try:
-                    plant_result = await foreshadow_service.auto_plant_pending_foreshadows(
-                        db=db_session,
-                        project_id=project.id,
-                        chapter_id=chapter_id,
-                        chapter_number=current_chapter.chapter_number,
+                    plant_result = await _auto_plant_foreshadows_with_new_session(
+                        user_id=current_user_id,
+                        project_id=saved_project_id,
+                        chapter_id=saved_chapter_id,
+                        chapter_number=saved_chapter_number,
                         chapter_content=full_content
                     )
                     if plant_result.get('planted_count', 0) > 0:
@@ -4139,6 +4165,9 @@ async def generate_single_chapter_for_batch(
             model="default"
         )
         db_session.add(history)
+        saved_project_id = chapter.project_id
+        saved_chapter_id = chapter.id
+        saved_chapter_number = chapter.chapter_number
         
         await db_session.commit()
         await db_session.refresh(chapter)
@@ -4179,14 +4208,13 @@ async def generate_single_chapter_for_batch(
     
     # 🔮 批量生成后自动标记计划在本章埋入的伏笔
     try:
-        async with write_lock:
-            plant_result = await foreshadow_service.auto_plant_pending_foreshadows(
-                db=db_session,
-                project_id=chapter.project_id,
-                chapter_id=chapter.id,
-                chapter_number=chapter.chapter_number,
-                chapter_content=full_content
-            )
+        plant_result = await _auto_plant_foreshadows_with_new_session(
+            user_id=user_id,
+            project_id=saved_project_id,
+            chapter_id=saved_chapter_id,
+            chapter_number=saved_chapter_number,
+            chapter_content=full_content
+        )
         if plant_result.get('planted_count', 0) > 0:
             logger.info(f"🔮 批量生成 - 自动标记伏笔已埋入: {plant_result['planted_count']}个")
     except Exception as plant_error:
