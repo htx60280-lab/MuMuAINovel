@@ -18,7 +18,6 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import aiohttp
-import pandas as pd
 
 
 MAX_TOKENS = 10000
@@ -281,4 +280,3 @@ class ConStoryChecker:
         timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT + 60)
         async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
             return await self.evaluate_single(session, {"id": 1, self.story_column: story_text})
-
