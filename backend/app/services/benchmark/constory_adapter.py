@@ -2,13 +2,9 @@
 from __future__ import annotations
 
 import json
-import tempfile
 import re
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-
-import pandas as pd
 
 from app.services.benchmark.constory_checker import (
     ConStoryChecker,
@@ -110,42 +106,32 @@ class ConStoryAdapter:
         api_base: str,
         api_key: str,
     ) -> Dict[str, Any]:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        with tempfile.TemporaryDirectory(prefix="novelforge_constory_") as temp_dir:
-            input_path = Path(temp_dir) / "story.parquet"
-            pd.DataFrame([
-                {
-                    "id": 1,
-                    "generated_story": story_text,
-                }
-            ]).to_parquet(input_path, index=False)
+        logger_obj = create_logger("novelforge_constory_judge")
+        templates = load_prompt_templates(str(self.CONSTORY_PROMPTS_DIR))
+        client = JudgeLLMClient(
+            api_base=api_base,
+            api_key=api_key,
+            model=judge_model,
+            max_concurrent=1,
+            logger=logger_obj,
+        )
+        checker = ConStoryChecker(
+            client=client,
+            prompt_templates=templates,
+            story_column="generated_story",
+            logger=logger_obj,
+        )
 
-            logger_obj = create_logger("novelforge_constory_judge")
-            templates = load_prompt_templates(str(self.CONSTORY_PROMPTS_DIR))
-            client = JudgeLLMClient(
-                api_base=api_base,
-                api_key=api_key,
-                model=judge_model,
-                max_concurrent=1,
-                logger=logger_obj,
-            )
-            checker = ConStoryChecker(
-                client=client,
-                prompt_templates=templates,
-                story_column="generated_story",
-                logger=logger_obj,
-            )
+        row = await checker.run_single_story(story_text)
+        if not row:
+            return {
+                "overall_score": 100,
+                "summary": "真实 ConStory checker 未返回问题结果。",
+                "score_breakdown": {},
+                "issues": [],
+            }
 
-            row = await checker.run_single_story(story_text)
-            if not row:
-                return {
-                    "overall_score": 100,
-                    "summary": "真实 ConStory checker 未返回问题结果。",
-                    "score_breakdown": {},
-                    "issues": [],
-                }
-
-            return self._convert_checker_row_to_result(row)
+        return self._convert_checker_row_to_result(row)
 
     def _convert_checker_row_to_result(self, row: Dict[str, Any]) -> Dict[str, Any]:
         category_mapping = {

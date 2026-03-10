@@ -20,6 +20,7 @@ anthropic==0.72.0
 
 # 工具库
 httpx==0.28.1
+aiohttp>=3.8.0
 python-dotenv==1.1.0
 psutil==6.1.1
 # MCP官方库（Model Context Protocol Python SDK）
