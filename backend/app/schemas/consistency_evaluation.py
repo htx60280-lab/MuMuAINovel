@@ -1,4 +1,5 @@
 """整书一致性评测 Schema。"""
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
@@ -26,7 +27,7 @@ class ConsistencyIssueResponse(BaseModel):
     location_text: Optional[str] = None
     chapter_number: Optional[int] = None
     evidence_json: Optional[Dict[str, Any]] = None
-    created_at: Optional[str] = None
+    created_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -47,9 +48,9 @@ class ConsistencyEvaluationResponse(BaseModel):
     issue_count: int = 0
     summary_json: Optional[Dict[str, Any]] = None
     error_message: Optional[str] = None
-    started_at: Optional[str] = None
-    finished_at: Optional[str] = None
-    created_at: Optional[str] = None
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
