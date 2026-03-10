@@ -3,6 +3,7 @@
 
 # 构建参数
 ARG USE_CN_MIRROR=false
+ARG PRELOAD_EMBEDDING_MODEL=false
 
 # 阶段1: 构建前端 (使用 slim 而非 alpine 解决 esbuild 兼容性问题)
 FROM node:20-slim AS frontend-builder
@@ -39,6 +40,7 @@ FROM python:3.11-slim
 ARG USE_CN_MIRROR
 ARG TARGETPLATFORM
 ARG TARGETARCH
+ARG PRELOAD_EMBEDDING_MODEL
 
 # 设置工作目录
 WORKDIR /app
@@ -70,7 +72,7 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
 
 # 安装其他Python依赖
 RUN if [ "$USE_CN_MIRROR" = "true" ]; then \
-        pip install --no-cache-dir -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/; \
+        PIP_REQUIRE_HASHES=0 pip install --no-cache-dir -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/; \
     else \
         pip install --no-cache-dir -r requirements.txt; \
     fi
@@ -81,16 +83,19 @@ RUN mkdir -p /app/embedding
 # 设置 Sentence-Transformers 缓存目录
 ENV SENTENCE_TRANSFORMERS_HOME=/app/embedding
 
-# 下载 embedding 模型（从 HuggingFace）
-# 使用 Python 脚本预下载模型，这样运行时不需要网络
-RUN python -c "\
+# 可选预下载 embedding 模型（默认关闭，避免构建阶段强依赖外网）
+RUN if [ "$PRELOAD_EMBEDDING_MODEL" = "true" ]; then \
+        python -c "\
 from sentence_transformers import SentenceTransformer; \
 import os; \
 os.environ['SENTENCE_TRANSFORMERS_HOME'] = '/app/embedding'; \
 print('Downloading sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2...'); \
 model = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'); \
 print('Model downloaded successfully!'); \
-"
+"; \
+    else \
+        echo 'Skip embedding preload during image build'; \
+    fi
 
 # 复制后端代码（不包含embedding，因为已经下载了）
 COPY backend/ ./
